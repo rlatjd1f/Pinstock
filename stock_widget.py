@@ -233,7 +233,7 @@ class StockWidget(QWidget):
     @staticmethod
     def calc_width_for_name(name: str) -> int:
         """종목명 픽셀 폭을 측정해 위젯 가로폭을 결정. 최소 MIN_W."""
-        font = QFont("", 8, QFont.Weight.Bold)
+        font = QFont("Malgun Gothic",8, QFont.Weight.Bold)
         fm = QFontMetrics(font)
         name_w = fm.horizontalAdvance(name)
         # 좌마진(14) + 우마진(14) + 여유(6) = 34
@@ -273,7 +273,7 @@ class StockWidget(QWidget):
 
         # 1행: 종목명
         self.name_lbl = QLabel(self.data.get("name", self.data["code"]))
-        self.name_lbl.setFont(QFont("", 8, QFont.Weight.Bold))
+        self.name_lbl.setFont(QFont("Malgun Gothic",8, QFont.Weight.Bold))
         self.name_lbl.setStyleSheet(f"color: {C['subtext']};")
         vl.addWidget(self.name_lbl)
 
@@ -283,12 +283,12 @@ class StockWidget(QWidget):
         price_row.setSpacing(8)
 
         self.price_lbl = QLabel("─")
-        self.price_lbl.setFont(QFont("", 11, QFont.Weight.Bold))
+        self.price_lbl.setFont(QFont("Malgun Gothic",11, QFont.Weight.Bold))
         self.price_lbl.setStyleSheet(f"color: {C['text']};")
         price_row.addWidget(self.price_lbl)
 
         self.rate_lbl = QLabel("")
-        self.rate_lbl.setFont(QFont("", 7))
+        self.rate_lbl.setFont(QFont("Malgun Gothic",7))
         self.rate_lbl.setStyleSheet(f"color: {C['subtext']};")
         price_row.addWidget(self.rate_lbl)
         price_row.addStretch()
@@ -558,7 +558,7 @@ class WidgetManager:
         p.setBrush(QBrush(QColor(C["blue"])))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(1, 1, 30, 30)
-        p.setFont(QFont("", 14, QFont.Weight.Bold))
+        p.setFont(QFont("Malgun Gothic",14, QFont.Weight.Bold))
         p.setPen(QPen(QColor(C["bg"])))
         p.drawText(px.rect(), Qt.AlignmentFlag.AlignCenter, "₩")
         p.end()
