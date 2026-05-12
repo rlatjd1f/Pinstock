@@ -309,12 +309,12 @@ class StockDialog(QDialog):
 
     # ── 종목명 자동 미리보기 ─────────────────────────────────────────────
     def _preview_name(self):
-        code = self.code_edit.text().strip()
+        code = self.code_edit.text().strip().upper()
         if not code:
             self._set_preview_neutral()
             return
-        if len(code) != 6 or not code.isdigit():
-            self._set_preview_hint("6자리 숫자 코드를 입력하세요")
+        if len(code) != 6 or not code.isalnum():
+            self._set_preview_hint("6자리 코드를 입력하세요 (숫자/영문)")
             return
         self._set_preview_hint("조회 중...")
         self.preview_lbl.repaint()
@@ -350,7 +350,7 @@ class StockDialog(QDialog):
 
     def get_data(self) -> dict:
         return {
-            "code":      self.code_edit.text().strip(),
+            "code":      self.code_edit.text().strip().upper(),
             "avg_price": self.avg_spin.value(),
             "quantity":  self.qty_spin.value(),
         }
