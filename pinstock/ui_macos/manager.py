@@ -1,0 +1,452 @@
+"""macOS 환경의 메인 오케스트레이션.
+
+- stocks.json 로드/저장
+- 종목별 시세/차트 백그라운드 폴링
+- 메뉴바 아이콘 → 팝오버 토글
+- 종목 추가/관리/Excel 다이얼로그는 ui_windows 모듈 재사용
+"""
+
+import os
+import json
+import copy
+import shutil
+from datetime import datetime
+
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
+
+from ..core.api import fetch_stock, fetch_minute_chart, fetch_daily_chart
+from ..core.storage import (
+    CONFIG_FILE, BACKUP_FILE,
+    export_stocks_to_excel, import_stocks_from_excel,
+)
+from ..ui_windows.manage_dialog import (
+    StockDialog, ManageStocksDialog, ImportModeDialog,
+)
+
+from .popover import Popover
+from .menubar import MenuBarIcon
+
+
+# ─── 종목별 시세/차트 폴링 워커 ───────────────────────────────────────────────
+class StockFetcher(QObject):
+    """한 종목의 가격(5초)/차트(60초) 폴링.
+    Windows StockWidget 안에 있던 _fetch_price/_fetch_chart 로직과 같다."""
+
+    price_updated  = pyqtSignal(str, dict)            # code, result
+    minute_updated = pyqtSignal(str, list, float)     # code, prices, open_price
+    daily_updated  = pyqtSignal(str, list)            # code, candles
+
+    STAGGER_MS = 600
+
+    def __init__(self, code: str, stagger_idx: int = 0, parent: QObject | None = None):
+        super().__init__(parent)
+        self.code = code
+        self._prev_change_price: int = 0
+
+        self.price_timer = QTimer(self)
+        self.price_timer.timeout.connect(self._fetch_price)
+
+        self.chart_timer = QTimer(self)
+        self.chart_timer.timeout.connect(self._fetch_chart)
+
+        QTimer.singleShot(stagger_idx * self.STAGGER_MS, self._start)
+
+    def _start(self):
+        self.price_timer.start(5_000)
+        self.chart_timer.start(60_000)
+        self._fetch_price()
+        self._fetch_chart()
+
+    def _fetch_price(self):
+        result = fetch_stock(self.code)
+        if result:
+            self._prev_change_price = int(result.get("change_price", 0))
+            self.price_updated.emit(self.code, result)
+
+    def _fetch_chart(self):
+        chart = fetch_minute_chart(self.code)
+        if chart and len(chart["prices"]) >= 2:
+            self.minute_updated.emit(self.code, chart["prices"], chart["open"])
+        else:
+            daily = fetch_daily_chart(self.code)
+            if daily:
+                self.daily_updated.emit(self.code, daily["candles"])
+
+    def stop(self):
+        self.price_timer.stop()
+        self.chart_timer.stop()
+
+
+# ─── 매니저 ─────────────────────────────────────────────────────────────────
+class MacAppManager(QObject):
+    """macOS Pinstock 메인 매니저."""
+
+    def __init__(self, app: QApplication):
+        super().__init__()
+        self.app = app
+        self.stocks: list[dict] = []
+        self.fetchers: dict[str, StockFetcher] = {}
+        self.current_prices: dict[str, int] = {}
+
+        # 설정 로드 (Windows 와 동일 스키마)
+        self.master_visible: bool = True
+        self.master_pos: list | None = None
+        self.hide_all_btn_pos: list | None = None
+        self.hide_master_btn_pos: list | None = None
+        self._load_config()
+
+        # UI
+        self.popover = Popover()
+        self.menubar = MenuBarIcon(app, parent=self)
+
+        # 시그널 연결
+        self.menubar.toggle_popover_requested.connect(self._on_toggle_popover)
+        self.popover.add_stock_requested.connect(self.open_add_dialog)
+        self.popover.manage_stocks_requested.connect(self.open_manage_dialog)
+        self.popover.export_requested.connect(self.open_export_dialog)
+        self.popover.import_requested.connect(self.open_import_dialog)
+        self.popover.quit_requested.connect(self.app.quit)
+        self.popover.edit_requested.connect(self._on_edit_request)
+        self.popover.delete_requested.connect(self._on_delete_request)
+
+        # 초기 데이터 푸시
+        self.popover.set_stocks(self.stocks)
+        self._recompute_summary()
+
+        # 종목별 폴링 시작
+        for i, s in enumerate(self.stocks):
+            self._spawn_fetcher(s["code"], stagger_idx=i)
+
+    # ── 팝오버 토글 ───────────────────────────────────────────────────────
+    def _on_toggle_popover(self, anchor_pos, anchor_w):
+        if self.popover.isVisible():
+            self.popover.hide()
+        else:
+            self.popover.show_below(anchor_pos, anchor_w)
+
+    # ── 폴링 워커 관리 ─────────────────────────────────────────────────────
+    def _spawn_fetcher(self, code: str, stagger_idx: int = 0):
+        f = StockFetcher(code, stagger_idx, parent=self)
+        f.price_updated.connect(self._on_price_updated)
+        f.minute_updated.connect(self.popover.update_stock_minute)
+        f.daily_updated.connect(self.popover.update_stock_daily)
+        self.fetchers[code] = f
+
+    def _kill_fetcher(self, code: str):
+        f = self.fetchers.pop(code, None)
+        if f:
+            f.stop()
+            f.deleteLater()
+
+    def _on_price_updated(self, code: str, result: dict):
+        # stocks 의 name 도 동기화 (네이버에서 이름 받아오면)
+        for s in self.stocks:
+            if s["code"] == code:
+                s["name"] = result["name"]
+                break
+        self.current_prices[code] = int(result["price"])
+        self.popover.update_stock_price(code, result)
+        self._recompute_summary()
+
+    # ── 포트폴리오 요약 재계산 ───────────────────────────────────────────
+    def _recompute_summary(self):
+        if not self.stocks:
+            self.popover.update_summary(0, 0)
+            return
+
+        total_invest = 0
+        total_eval   = 0
+        for s in self.stocks:
+            if s.get("hidden", False):
+                continue
+            avg = int(s.get("avg_price", 0))
+            qty = int(s.get("quantity", 0))
+            total_invest += avg * qty
+            price = self.current_prices.get(s["code"], avg)
+            total_eval += price * qty
+        self.popover.update_summary(total_invest, total_eval)
+
+    # ── 설정 파일 ──────────────────────────────────────────────────────────
+    def _load_config(self):
+        if not os.path.exists(CONFIG_FILE):
+            return
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+
+        if isinstance(data, list):
+            self.stocks = data
+        elif isinstance(data, dict):
+            self.stocks = data.get("stocks", []) or []
+            master = data.get("master") or {}
+            self.master_visible = bool(master.get("visible", True))
+            pos = master.get("pos")
+            if isinstance(pos, list) and len(pos) == 2:
+                try:
+                    self.master_pos = [int(pos[0]), int(pos[1])]
+                except (TypeError, ValueError):
+                    self.master_pos = None
+            toggles = data.get("toggles") or {}
+            for key, attr in (("hide_all_pos", "hide_all_btn_pos"),
+                              ("hide_master_pos", "hide_master_btn_pos")):
+                p = toggles.get(key)
+                if isinstance(p, list) and len(p) == 2:
+                    try:
+                        setattr(self, attr, [int(p[0]), int(p[1])])
+                    except (TypeError, ValueError):
+                        pass
+
+    def _save_config(self):
+        # Windows 와 호환되는 스키마 — Mac 에서는 의미 없는 필드도 보존만 함
+        data = {
+            "stocks": self.stocks,
+            "master": {
+                "visible": self.master_visible,
+                "pos": self.master_pos,
+            },
+            "toggles": {
+                "hide_all_pos":    self.hide_all_btn_pos,
+                "hide_master_pos": self.hide_master_btn_pos,
+            },
+        }
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[save] 오류: {e}")
+
+    # ── 종목 추가 ──────────────────────────────────────────────────────────
+    def open_add_dialog(self):
+        dlg = StockDialog()
+        if not dlg.exec():
+            return
+        d = dlg.get_data()
+        code = d["code"]
+        if not code:
+            return
+        if any(s["code"] == code for s in self.stocks):
+            QMessageBox.information(None, "알림", f"'{code}'는 이미 추가되어 있습니다.")
+            return
+
+        result = fetch_stock(code)
+        if not result:
+            QMessageBox.warning(
+                None, "조회 실패",
+                f"종목코드 '{code}'를 찾을 수 없습니다.\n코드를 다시 확인해 주세요."
+            )
+            return
+
+        d["name"] = result["name"]
+        self.stocks.append(d)
+        self.current_prices[code] = int(result["price"])
+        self._save_config()
+
+        # 팝오버 재구성 + 폴링 시작
+        self.popover.set_stocks(self.stocks)
+        self._spawn_fetcher(code, stagger_idx=0)
+        self._recompute_summary()
+
+    # ── 종목 일괄 관리 ────────────────────────────────────────────────────
+    def open_manage_dialog(self):
+        current_prices = dict(self.current_prices)
+        dlg = ManageStocksDialog(
+            stocks=copy.deepcopy(self.stocks),
+            current_prices=current_prices,
+        )
+        if not dlg.exec():
+            return
+        new_stocks = dlg.get_stocks()
+
+        old_codes = {s["code"] for s in self.stocks}
+        new_codes = {s["code"] for s in new_stocks}
+
+        # 삭제된 종목: fetcher 정지
+        for code in old_codes - new_codes:
+            self._kill_fetcher(code)
+            self.current_prices.pop(code, None)
+
+        # 추가된 종목: fetcher 시작 (stagger)
+        added_idx = 0
+        for s in new_stocks:
+            if s["code"] not in old_codes:
+                self._spawn_fetcher(s["code"], stagger_idx=added_idx)
+                added_idx += 1
+
+        self.stocks = new_stocks
+        self._save_config()
+        self.popover.set_stocks(self.stocks)
+        self._recompute_summary()
+
+    # ── 종목 행 우클릭: 수정 ──────────────────────────────────────────────
+    def _on_edit_request(self, code: str):
+        target = next((s for s in self.stocks if s["code"] == code), None)
+        if target is None:
+            return
+        dlg = StockDialog(data=target)
+        if not dlg.exec():
+            return
+        new = dlg.get_data()
+        target["avg_price"] = new["avg_price"]
+        target["quantity"]  = new["quantity"]
+        self._save_config()
+        self.popover.set_stocks(self.stocks)
+        self._recompute_summary()
+
+    # ── 종목 행 우클릭: 삭제 ──────────────────────────────────────────────
+    def _on_delete_request(self, code: str):
+        target = next((s for s in self.stocks if s["code"] == code), None)
+        if target is None:
+            return
+        name = target.get("name", code)
+        ret = QMessageBox.question(
+            None, "삭제 확인",
+            f"'{name}' 을(를) 삭제할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        self.stocks = [s for s in self.stocks if s["code"] != code]
+        self._kill_fetcher(code)
+        self.current_prices.pop(code, None)
+        self._save_config()
+        self.popover.set_stocks(self.stocks)
+        self._recompute_summary()
+
+    # ── Excel 내보내기 ────────────────────────────────────────────────────
+    def open_export_dialog(self):
+        if not self.stocks:
+            QMessageBox.information(None, "알림", "내보낼 보유 종목이 없습니다.")
+            return
+
+        default_name = f"pinstock_holdings_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            None, "보유 종목 Excel로 내보내기",
+            os.path.join(os.path.expanduser("~"), default_name),
+            "Excel 파일 (*.xlsx)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        try:
+            export_stocks_to_excel(self.stocks, path, self.current_prices)
+        except ImportError:
+            QMessageBox.critical(
+                None, "라이브러리 없음",
+                "openpyxl 패키지가 필요합니다.\n\n터미널에서 다음을 실행하세요:\n    pip install openpyxl"
+            )
+            return
+        except Exception as e:
+            QMessageBox.critical(None, "내보내기 실패", f"파일을 저장할 수 없습니다.\n\n{e}")
+            return
+
+        QMessageBox.information(
+            None, "내보내기 완료",
+            f"{len(self.stocks)}개 종목을 저장했습니다.\n\n{path}"
+        )
+
+    # ── Excel 가져오기 ────────────────────────────────────────────────────
+    def open_import_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Excel에서 보유 종목 가져오기",
+            os.path.expanduser("~"),
+            "Excel 파일 (*.xlsx)"
+        )
+        if not path:
+            return
+
+        try:
+            imported = import_stocks_from_excel(path)
+        except ImportError:
+            QMessageBox.critical(
+                None, "라이브러리 없음",
+                "openpyxl 패키지가 필요합니다.\n\n터미널에서 다음을 실행하세요:\n    pip install openpyxl"
+            )
+            return
+        except ValueError as e:
+            QMessageBox.critical(None, "가져오기 실패", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(None, "가져오기 실패", f"파일을 읽을 수 없습니다.\n\n{e}")
+            return
+
+        mode_dlg = ImportModeDialog()
+        if not mode_dlg.exec():
+            return
+        mode = mode_dlg.mode
+
+        if mode == "overwrite":
+            msg = (
+                f"덮어쓰기 모드입니다.\n\n"
+                f"기존 {len(self.stocks)}개 종목이 모두 삭제되고\n"
+                f"Excel의 {len(imported)}개 종목으로 교체됩니다.\n\n"
+                "계속할까요?"
+            )
+        else:
+            new_codes = {s["code"] for s in imported}
+            existing_codes = {s["code"] for s in self.stocks}
+            updated = len(new_codes & existing_codes)
+            added = len(new_codes - existing_codes)
+            msg = (
+                f"병합 모드입니다.\n\n"
+                f"• 갱신: {updated}개 (기존 종목 평단가/수량 업데이트)\n"
+                f"• 추가: {added}개 (새 종목)\n"
+                f"• 유지: {len(existing_codes - new_codes)}개 (Excel에 없는 기존 종목)\n\n"
+                "계속할까요?"
+            )
+        ret = QMessageBox.question(
+            None, "가져오기 확인", msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        # stocks.json 백업
+        if os.path.exists(CONFIG_FILE):
+            try:
+                shutil.copy2(CONFIG_FILE, BACKUP_FILE)
+            except Exception as e:
+                print(f"[backup] 오류: {e}")
+
+        # 새 stocks 구성
+        if mode == "overwrite":
+            new_stocks = imported
+        else:
+            by_code = {s["code"]: s for s in self.stocks}
+            new_stocks = []
+            for s in imported:
+                base = dict(by_code.get(s["code"], {}))
+                base.update(s)
+                new_stocks.append(base)
+            imported_codes = {s["code"] for s in imported}
+            for s in self.stocks:
+                if s["code"] not in imported_codes:
+                    new_stocks.append(s)
+
+        self._rebuild(new_stocks)
+
+        QMessageBox.information(
+            None, "가져오기 완료",
+            f"총 {len(new_stocks)}개 종목이 적용되었습니다.\n"
+            f"이전 데이터는 다음에 백업되었습니다:\n{BACKUP_FILE}"
+        )
+
+    # ── 종목 리스트 전체 교체 ─────────────────────────────────────────────
+    def _rebuild(self, new_stocks: list[dict]):
+        for code in list(self.fetchers):
+            self._kill_fetcher(code)
+        self.current_prices.clear()
+
+        self.stocks = new_stocks
+        self._save_config()
+        self.popover.set_stocks(self.stocks)
+        self._recompute_summary()
+
+        for i, s in enumerate(self.stocks):
+            self._spawn_fetcher(s["code"], stagger_idx=i)

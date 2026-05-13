@@ -13,9 +13,14 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # 트레이만 있어도 계속 실행
 
-    from .ui_windows.manager import WidgetManager
-    manager = WidgetManager(app)
-    app.aboutToQuit.connect(manager.save_positions)
+    if sys.platform == "darwin":
+        from .ui_macos.manager import MacAppManager
+        manager = MacAppManager(app)
+        app.aboutToQuit.connect(manager._save_config)
+    else:
+        from .ui_windows.manager import WidgetManager
+        manager = WidgetManager(app)
+        app.aboutToQuit.connect(manager.save_positions)
 
     sys.exit(app.exec())
 
