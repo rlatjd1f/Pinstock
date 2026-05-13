@@ -70,7 +70,7 @@ class StockRow(QWidget):
         info.setSpacing(1)
 
         self.name_lbl = QLabel(self.data.get("name", self.data["code"]))
-        self.name_lbl.setFont(QFont(_FONT_FAMILY, 10, QFont.Weight.Medium))
+        self.name_lbl.setFont(QFont(_FONT_FAMILY, 12, QFont.Weight.Medium))
         self.name_lbl.setStyleSheet(f"color: {C['subtext']};")
         info.addWidget(self.name_lbl)
 
@@ -233,7 +233,7 @@ class PortfolioSummary(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(self.H)
-        self.setStyleSheet(f"background: {C['bg2']};")
+        self.setStyleSheet("background: transparent;")
 
         grid = QGridLayout(self)
         grid.setContentsMargins(14, 12, 14, 12)
@@ -389,7 +389,7 @@ class Popover(QWidget):
 
         # ── 하단: 액션 바 ────────────────────────────────────────────────
         action_row = QWidget(self.card)
-        action_row.setStyleSheet(f"background: {C['bg2']};")
+        action_row.setStyleSheet("background: transparent;")
         action_row.setFixedHeight(44)
         hl = QHBoxLayout(action_row)
         hl.setContentsMargins(8, 6, 8, 6)
