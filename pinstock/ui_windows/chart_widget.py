@@ -1,0 +1,173 @@
+"""미니 가격 차트 (sparkline) — 분봉 라인 + 일봉 캔들 두 모드."""
+
+from PyQt6.QtWidgets import QWidget
+from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtGui import QPainter, QColor, QBrush, QPainterPath, QPen
+
+from .theme import C
+
+
+# ─── 가격 미니 차트 (sparkline) ───────────────────────────────────────────────
+class SparklineWidget(QWidget):
+    """미니 가격 차트. 두 가지 모드 지원.
+    - line  : 당일 1분봉 라인 + area, 시초가 대비 색상 결정, 전일 종가 점선
+    - candle: 최근 N일 일봉 캔들 (양봉=빨강, 음봉=파랑)"""
+
+    W = 100   # 차트 너비
+    H = 40    # 차트 높이
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.W, self.H)
+        self.mode: str = "line"
+        self.prices: list[float] = []
+        self.open_price: float = 0.0
+        self.prev_close: float = 0.0   # 전일 종가 (가로 점선 표시용, line 모드 전용)
+        self.candles: list[dict] = []  # OHLC dict 리스트 (candle 모드)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def set_data(self, prices: list[float], open_price: float, prev_close: float = 0.0):
+        self.mode = "line"
+        self.prices = prices
+        self.open_price = open_price
+        self.prev_close = prev_close
+        self.update()
+
+    def set_candles(self, candles: list[dict]):
+        self.mode = "candle"
+        self.candles = candles
+        self.update()
+
+    def paintEvent(self, event):
+        if self.mode == "candle":
+            self._paint_candles()
+        else:
+            self._paint_line()
+
+    # ── 라인 모드 (당일 분봉) ────────────────────────────────────────────
+    def _paint_line(self):
+        prices = self.prices
+        if not prices or len(prices) < 2:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        last = prices[-1]
+        op = self.open_price or prices[0]
+        color = QColor(C['red']) if last >= op else QColor(C['blue'])
+        fill = QColor(color)
+        fill.setAlpha(50)
+
+        pad = 4
+        w = self.W - 2 * pad
+        h = self.H - 2 * pad
+
+        # y범위: 가격뿐 아니라 전일 종가도 포함시켜 점선이 항상 영역 안에 들어오게
+        y_values = list(prices)
+        if self.prev_close > 0:
+            y_values.append(self.prev_close)
+        mn = min(y_values)
+        mx = max(y_values)
+        rng = (mx - mn) if mx > mn else 1.0
+
+        def y_of(price: float) -> float:
+            return pad + (1 - (price - mn) / rng) * h
+
+        # x축은 거래시간 전체(09:00~15:30, 약 391분봉) 기준으로 절대 매핑.
+        # 단, 장 초반에 너무 좁아 보이지 않도록 최소 가시 영역(15%) 보장.
+        TOTAL_BARS = 391
+        MIN_VISIBLE_RATIO = 0.15
+        actual_ratio = (len(prices) - 1) / (TOTAL_BARS - 1)
+        visible_ratio = min(max(actual_ratio, MIN_VISIBLE_RATIO), 1.0)
+
+        n = len(prices)
+        pts: list[QPointF] = []
+        for i, p in enumerate(prices):
+            x = pad + (i / (n - 1)) * visible_ratio * w
+            pts.append(QPointF(x, y_of(p)))
+
+        # area fill (라인 아래 반투명 채움)
+        area = QPainterPath()
+        area.moveTo(pts[0])
+        for pt in pts[1:]:
+            area.lineTo(pt)
+        area.lineTo(pts[-1].x(), pad + h)
+        area.lineTo(pts[0].x(), pad + h)
+        area.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(fill))
+        painter.drawPath(area)
+
+        # 전일 종가 기준선 (가로 점선) — 촘촘한 dot, 살짝 흐린 색
+        if self.prev_close > 0:
+            line_y = y_of(self.prev_close)
+            pen_color = QColor(C['subtext'])
+            pen_color.setAlpha(180)         # 살짝 흐리게
+            dotted = QPen(pen_color)
+            dotted.setWidthF(0.8)            # 얇게
+            dotted.setDashPattern([1, 2])    # 1px on, 2px off (거의 dot)
+            painter.setPen(dotted)
+            painter.drawLine(QPointF(pad, line_y), QPointF(pad + w, line_y))
+
+        # line stroke (현재가 라인)
+        line = QPainterPath()
+        line.moveTo(pts[0])
+        for pt in pts[1:]:
+            line.lineTo(pt)
+        painter.setPen(QPen(color, 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(line)
+
+        painter.end()
+
+    # ── 캔들 모드 (일봉) ────────────────────────────────────────────────
+    def _paint_candles(self):
+        candles = self.candles
+        if not candles:
+            return
+
+        painter = QPainter(self)
+        # 캔들은 픽셀 정렬이 더 선명 — antialias off
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        pad = 3
+        w = self.W - 2 * pad
+        h = self.H - 2 * pad
+
+        mn = min(c["low"]  for c in candles)
+        mx = max(c["high"] for c in candles)
+        rng = (mx - mn) if mx > mn else 1.0
+
+        def y_of(price: float) -> float:
+            return pad + (1 - (price - mn) / rng) * h
+
+        n = len(candles)
+        slot = w / n
+        body_w = max(1.5, slot * 0.7)
+
+        red  = QColor(C['red'])
+        blue = QColor(C['blue'])
+
+        for i, c in enumerate(candles):
+            cx = pad + (i + 0.5) * slot
+            up = c["close"] >= c["open"]
+            color = red if up else blue
+
+            # 심지(고가–저가)
+            painter.setPen(QPen(color, 0.8))
+            painter.drawLine(
+                QPointF(cx, y_of(c["high"])),
+                QPointF(cx, y_of(c["low"])),
+            )
+
+            # 몸통(시가↔종가)
+            y_open  = y_of(c["open"])
+            y_close = y_of(c["close"])
+            body_top = min(y_open, y_close)
+            body_h   = max(1.0, abs(y_close - y_open))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(color))
+            painter.drawRect(QRectF(cx - body_w / 2, body_top, body_w, body_h))
+
+        painter.end()
