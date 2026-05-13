@@ -21,22 +21,28 @@
 
 | OS | 파일 |
 |---|---|
-| **macOS** (Apple Silicon) | `Pinstock-macos.zip` |
-| **Windows** (64-bit) | `Pinstock-windows.zip` |
+| **macOS** (Apple Silicon) | `Pinstock-mac-vX.Y.Z.zip` |
+| **Windows** (64-bit) | `Pinstock-win-vX.Y.Z.zip` |
 
 ### macOS
-1. `Pinstock-macos.zip` 다운로드 → 더블클릭하면 자동으로 `Pinstock.app` 이 풀립니다.
+1. `Pinstock-mac-vX.Y.Z.zip` 다운로드 → 더블클릭하면 자동으로 `Pinstock.app` 이 풀립니다.
 2. `Pinstock.app` 을 **`응용 프로그램`** 폴더로 드래그.
-3. **첫 실행**: Finder 에서 `Pinstock.app` 우클릭 → **"열기"** → 경고창에서 **"열기"** 한 번 더. *(코드 서명을 하지 않아 처음 한 번만 우회가 필요합니다.)*
-4. 메뉴바에 ₩ 아이콘이 나타나면 끝.
+3. **첫 실행 (한 번만 우회):**
+   1. `Pinstock.app` 더블클릭 → *"Apple은 ... 악성 코드가 없음을 확인할 수 없습니다"* 차단 팝업 → **"완료"** 클릭해서 닫기.
+   2. **시스템 설정 → 개인정보 보호 및 보안** 열기 → 아래로 스크롤.
+   3. **"'Pinstock' 사용이 차단되었습니다…"** 메시지 옆 **"그래도 열기"** 버튼 클릭 → 암호/Touch ID 인증.
+   4. 다시 `Pinstock.app` 더블클릭 → 새 팝업의 **"열기"** 클릭.
+4. 메뉴바에 ₩ 아이콘이 나타나면 끝. 이후엔 그냥 더블클릭으로 실행됩니다.
+
+> 📝 macOS 15 (Sequoia) 이상부터는 Apple 이 *"우클릭 → 열기"* 단축 우회를 제거해서, **시스템 설정** 경로로만 첫 실행이 가능합니다. (이 앱은 무료 배포라 Apple Developer ID 코드 서명이 없습니다.)
 
 ### Windows
-1. `Pinstock-windows.zip` 다운로드 → 우클릭 → 압축 풀기.
+1. `Pinstock-win-vX.Y.Z.zip` 다운로드 → 우클릭 → 압축 풀기.
 2. 풀린 `Pinstock` 폴더 전체를 원하는 위치(예: `C:\Program Files\Pinstock\` 또는 바탕화면)로 옮기고, 안의 `Pinstock.exe` 더블클릭.
 3. **첫 실행**: "Windows 가 PC를 보호했습니다" 경고 → **"추가 정보" → "실행"** 클릭.
 4. 시스템 트레이에 ₩ 아이콘 + 화면 우상단에 위젯 표시.
 
-> 자세한 안내·알려진 제약은 [v0.1.0 릴리즈 노트](https://github.com/Hyuntae-Jeong/Pinstock/releases/tag/v0.1.0) 참고.
+> 자세한 안내·알려진 제약은 [최신 릴리즈 노트](https://github.com/Hyuntae-Jeong/Pinstock/releases/latest) 참고.
 
 ---
 
