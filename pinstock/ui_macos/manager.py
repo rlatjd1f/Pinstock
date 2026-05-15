@@ -99,6 +99,8 @@ class MacAppManager(QObject):
         self.master_pos: list | None = None
         self.hide_all_btn_pos: list | None = None
         self.hide_master_btn_pos: list | None = None
+        self.assets_hidden: bool = False
+        self.popover_opacity: float = 1.0
         self._load_config()
 
         # UI
@@ -114,6 +116,12 @@ class MacAppManager(QObject):
         self.popover.quit_requested.connect(self.app.quit)
         self.popover.edit_requested.connect(self._on_edit_request)
         self.popover.delete_requested.connect(self._on_delete_request)
+        self.popover.assets_hidden_changed.connect(self._on_assets_hidden_changed)
+        self.popover.opacity_changed.connect(self._on_opacity_changed)
+
+        # 로드한 자산 숨김 / 팝오버 투명도 상태를 팝오버에 한 번 주입
+        self.popover.set_assets_hidden(self.assets_hidden)
+        self.popover.set_opacity(self.popover_opacity)
 
         # 초기 데이터 푸시
         self._sync_popover_stocks()
@@ -167,6 +175,14 @@ class MacAppManager(QObject):
         self.last_daily_data[code] = candles
         self.last_minute_data.pop(code, None)
         self.popover.update_stock_daily(code, candles)
+
+    def _on_assets_hidden_changed(self, hidden: bool):
+        self.assets_hidden = hidden
+        self._save_config()
+
+    def _on_opacity_changed(self, opacity: float):
+        self.popover_opacity = opacity
+        self._save_config()
 
     def _reapply_cached_data(self):
         """popover.set_stocks() 이후 새로 만들어진 행에 캐시된 가격/차트를 즉시 다시
@@ -231,6 +247,12 @@ class MacAppManager(QObject):
                         setattr(self, attr, [int(p[0]), int(p[1])])
                     except (TypeError, ValueError):
                         pass
+            self.assets_hidden = bool(data.get("assets_hidden", False))
+            try:
+                opacity = float(data.get("popover_opacity", 1.0))
+                self.popover_opacity = max(0.6, min(1.0, opacity))
+            except (TypeError, ValueError):
+                self.popover_opacity = 1.0
 
     def _save_config(self):
         # Windows 와 호환되는 스키마 — Mac 에서는 의미 없는 필드도 보존만 함
@@ -244,6 +266,8 @@ class MacAppManager(QObject):
                 "hide_all_pos":    self.hide_all_btn_pos,
                 "hide_master_pos": self.hide_master_btn_pos,
             },
+            "assets_hidden": self.assets_hidden,
+            "popover_opacity": self.popover_opacity,
         }
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
