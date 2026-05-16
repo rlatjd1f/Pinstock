@@ -254,8 +254,8 @@ MIT License — 자유롭게 사용·수정·재배포할 수 있습니다.
 ## 💬 피드백 & 기여
 
 이 프로젝트는 취미로 만든 사이드 프로젝트입니다.
-누구나 이슈 등록 / PR 제출 환영합니다!
+**사용하시다가 불편한 점이나 "이런 기능이 있으면 좋겠다" 싶은 게 생기시면 망설이지 말고 알려주세요.** 작은 의견 하나가 다음 기능의 출발점이 됩니다. 직접 코드로 기여해주시는 것도 언제든 환영해요 🙌
 
 - 🐛 **버그 발견**: [Bug Report](https://github.com/Hyuntae-Jeong/Pinstock/issues/new?template=bug_report.yml)
 - 💡 **기능 제안**: [Feature Request](https://github.com/Hyuntae-Jeong/Pinstock/issues/new?template=feature_request.yml)
-- 🔧 **직접 기여**: Fork → branch → PR (자세한 가이드는 추후 `CONTRIBUTING.md` 참고)
+- 🔧 **직접 기여**: Fork → branch → PR — 자세한 절차는 [CONTRIBUTING.md](CONTRIBUTING.md) 를 참고해주세요. 처음 기여하시는 분은 [`good first issue`](https://github.com/Hyuntae-Jeong/Pinstock/labels/good%20first%20issue) 라벨이 붙은 이슈부터 살펴보시면 좋습니다.
