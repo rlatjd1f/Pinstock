@@ -409,6 +409,9 @@ class WidgetManager:
         pos = stock.get("pos", [def_x, def_y])
         w.move(pos[0], pos[1])
         w.setWindowOpacity(self.popover_opacity)
+        # 투명도 50% 이하면 클릭이 통과되는 모드로 (show 전이라 flag 만 set 해두면 됨)
+        if self._is_click_through_opacity(self.popover_opacity):
+            w.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
         # 종목별 hidden 표시 + 전체 숨김 상태 둘 다 고려
         if not stock.get("hidden", False) and not self.is_hidden:
             w.show()
@@ -444,6 +447,12 @@ class WidgetManager:
         self._recompute_master()
 
     # ── 투명도 동기화 ─────────────────────────────────────────────────────
+    # 이 임계값 이하면 종목 위젯이 클릭 통과 모드로 (MasterWidget.LOCK_THRESHOLD 와 일치).
+    CLICK_THROUGH_OPACITY = 0.5
+
+    def _is_click_through_opacity(self, opacity: float) -> bool:
+        return opacity <= self.CLICK_THROUGH_OPACITY
+
     def _apply_opacity_to_all(self, opacity: float):
         """마스터 + 모든 종목 위젯 + 토글 버튼에 동일 투명도 적용."""
         if self.master_widget:
@@ -455,9 +464,25 @@ class WidgetManager:
         if self.hide_master_btn:
             self.hide_master_btn.setWindowOpacity(opacity)
 
+    def _apply_click_through(self, opacity: float):
+        """종목 위젯에만 클릭 통과 모드 토글. 마스터/토글 버튼은 항상 클릭 가능."""
+        enabled = self._is_click_through_opacity(opacity)
+        flag = Qt.WindowType.WindowTransparentForInput
+        for w in self.widgets.values():
+            if bool(w.windowFlags() & flag) == enabled:
+                continue
+            # 플래그 변경은 윈도우를 재생성하므로 위치/표시를 복원해줘야 한다.
+            was_visible = w.isVisible()
+            pos = w.pos()
+            w.setWindowFlag(flag, enabled)
+            w.move(pos)
+            if was_visible:
+                w.show()
+
     def _on_opacity_changed(self, opacity: float):
         self.popover_opacity = opacity
         self._apply_opacity_to_all(opacity)
+        self._apply_click_through(opacity)
         self._save_config()
 
     def _master_toggle_text(self) -> str:

@@ -2,11 +2,78 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,
-    QSlider,
+    QSlider, QStyle, QStyleOptionSlider,
 )
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor
 
 from .theme import C
+
+
+# ─── 잠금 상태에서 핸들이 자물쇠로 변하는 슬라이더 ──────────────────────────
+class _OpacitySlider(QSlider):
+    """`set_locked(True)` 일 때 기본 동그란 핸들 대신 자물쇠 모양을 그린다.
+    슬라이더 자체 상호작용은 그대로 유지 (사용자가 잠금 상태에서도 끌어올릴 수 있음)."""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._locked = False
+        self._normal_qss = ""
+        self._locked_qss = ""
+
+    def set_styles(self, normal_qss: str, locked_qss: str):
+        self._normal_qss = normal_qss
+        self._locked_qss = locked_qss
+        self.setStyleSheet(self._locked_qss if self._locked else self._normal_qss)
+
+    def set_locked(self, locked: bool):
+        if self._locked == locked:
+            return
+        self._locked = locked
+        self.setStyleSheet(self._locked_qss if locked else self._normal_qss)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._locked:
+            return
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        handle_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt,
+            QStyle.SubControl.SC_SliderHandle, self,
+        )
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._draw_lock(painter, handle_rect)
+
+    @staticmethod
+    def _draw_lock(painter: QPainter, rect):
+        # 핸들 중심 기준 14x14 자물쇠. shackle(U자) + body(둥근 사각형).
+        s = 14.0
+        cx = rect.center().x()
+        cy = rect.center().y()
+
+        body_w = s * 0.78
+        body_h = s * 0.48
+        body_x = cx - body_w / 2
+        body_y = cy + s * 0.04
+
+        shackle_w = body_w * 0.62
+        shackle_h = s * 0.45
+        shackle_x = cx - shackle_w / 2
+        shackle_y = body_y - shackle_h * 0.7
+
+        painter.setBrush(QBrush(QColor(C['text'])))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(QRectF(body_x, body_y, body_w, body_h), 1.5, 1.5)
+
+        pen = QPen(QColor(C['text']))
+        pen.setWidthF(1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(shackle_x, shackle_y, shackle_w, shackle_h), 0, 180 * 16)
 
 
 # ─── 포트폴리오 요약 마스터 위젯 ─────────────────────────────────────────────
@@ -25,8 +92,10 @@ class MasterWidget(QWidget):
     # 투명도 슬라이더 범위 (퍼센트). Windows 는 macOS(60–100) 보다 넓게 10–100.
     OPACITY_MIN = 10
     OPACITY_MAX = 100
+    # 이 값(퍼센트) 이하면 종목 위젯이 클릭 통과 모드로 들어가고 슬라이더 핸들이 자물쇠로 바뀜.
+    LOCK_THRESHOLD = 50
 
-    opacity_changed = pyqtSignal(float)   # 0.6 ~ 1.0
+    opacity_changed = pyqtSignal(float)   # 0.1 ~ 1.0
 
     def __init__(self, width: int):
         super().__init__()
@@ -35,6 +104,7 @@ class MasterWidget(QWidget):
         self._drag_pos  = None
         self._press_pos = None
         self._moved     = False
+        self._drag_locked: bool = False   # True 면 본체 드래그로 위치 이동 불가 (잠금 모드)
         self.is_expanded: bool = False
         self.holdings: list[dict] = []   # [{"name", "profit", "profit_rate"}, ...]
 
@@ -83,36 +153,55 @@ class MasterWidget(QWidget):
         self.expand_panel.hide()
 
     # ── 투명도 슬라이더 (우측 하단) ───────────────────────────────────────
+    _GROOVE_QSS = """
+        QSlider::groove:horizontal {{
+            height: 3px;
+            background: {surface2};
+            border-radius: 1px;
+        }}
+        QSlider::sub-page:horizontal {{
+            background: {subtext};
+            border-radius: 1px;
+        }}
+    """
+    _NORMAL_HANDLE_QSS = """
+        QSlider::handle:horizontal {{
+            width: 10px;
+            height: 10px;
+            margin: -4px 0;
+            background: {text};
+            border-radius: 5px;
+        }}
+    """
+    # 잠금 모드에서는 기본 핸들을 투명하게 숨기고, paintEvent 가 자물쇠를 그린다.
+    _LOCKED_HANDLE_QSS = """
+        QSlider::handle:horizontal {{
+            width: 14px;
+            height: 14px;
+            margin: -6px 0;
+            background: transparent;
+            border: none;
+        }}
+    """
+
     def _build_opacity_slider(self, parent: QWidget):
         hl = QHBoxLayout(parent)
         hl.setContentsMargins(14, 2, 14, 6)
         hl.setSpacing(6)
         hl.addStretch(1)
 
-        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider = _OpacitySlider(Qt.Orientation.Horizontal)
         self.opacity_slider.setRange(self.OPACITY_MIN, self.OPACITY_MAX)
         self.opacity_slider.setValue(self.OPACITY_MAX)
         self.opacity_slider.setFixedWidth(90)
         self.opacity_slider.setToolTip("위젯 투명도")
         self.opacity_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.opacity_slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                height: 3px;
-                background: {C['surface2']};
-                border-radius: 1px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {C['subtext']};
-                border-radius: 1px;
-            }}
-            QSlider::handle:horizontal {{
-                width: 10px;
-                height: 10px;
-                margin: -4px 0;
-                background: {C['text']};
-                border-radius: 5px;
-            }}
-        """)
+
+        groove = self._GROOVE_QSS.format(**C)
+        self.opacity_slider.set_styles(
+            normal_qss=groove + self._NORMAL_HANDLE_QSS.format(**C),
+            locked_qss=groove + self._LOCKED_HANDLE_QSS.format(**C),
+        )
         self.opacity_slider.valueChanged.connect(self._on_opacity_slider_changed)
         hl.addWidget(self.opacity_slider, 0)
 
@@ -123,10 +212,18 @@ class MasterWidget(QWidget):
         self.opacity_slider.blockSignals(True)
         self.opacity_slider.setValue(pct)
         self.opacity_slider.blockSignals(False)
+        self._sync_lock_visual(pct)
 
     def _on_opacity_slider_changed(self, pct: int):
+        self._sync_lock_visual(pct)
         opacity = pct / 100.0
         self.opacity_changed.emit(opacity)
+
+    def _sync_lock_visual(self, pct: int):
+        locked = pct <= self.LOCK_THRESHOLD
+        self.opacity_slider.set_locked(locked)
+        # 잠금 모드에서는 본체 드래그로 위치 이동 불가. 슬라이더/클릭-토글은 그대로 작동.
+        self._drag_locked = locked
 
     def _make_cell(self, grid: QGridLayout, row: int, col: int,
                    key_text: str, bold: bool = False) -> QLabel:
@@ -352,7 +449,8 @@ class MasterWidget(QWidget):
                 delta = event.globalPosition().toPoint() - self._press_pos
                 if abs(delta.x()) > self.DRAG_THRESHOLD or abs(delta.y()) > self.DRAG_THRESHOLD:
                     self._moved = True
-            if self._moved:
+            # 잠금 모드면 _moved 만 표시(릴리즈 시 토글 발화 차단)하고 실제 이동은 건너뜀
+            if self._moved and not self._drag_locked:
                 self.move(event.globalPosition().toPoint() - self._drag_pos)
 
     def mouseReleaseEvent(self, event):
