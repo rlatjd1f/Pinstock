@@ -6,7 +6,7 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QMenu, QSlider,
+    QScrollArea, QFrame, QMenu, QSlider, QApplication,
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics, QScreen
@@ -342,7 +342,18 @@ class PortfolioSummary(QWidget):
 # ─── 팝오버 메인 ─────────────────────────────────────────────────────────────
 class Popover(QWidget):
     """메뉴바 아이콘 아래에 펼쳐지는 팝오버 패널.
-    Qt.Popup 윈도우 — 외부 클릭 시 자동으로 닫힘."""
+
+    Qt.Tool + WindowStaysOnTopHint. macOS 에서 Qt.Tool 은 NSPanel 로 매핑되어
+    앱이 inactive 가 되면 자동 숨김 → 외부 영역 클릭 시 popover 가 닫히는
+    원하는 UX 가 자연스럽게 동작한다.
+    (참고: 외부클릭 닫힘 직후 트레이 첫 클릭이 macOS 의 "inactive 앱 깨우기"
+    동작에 소비되어 한 번 씹히는 현상이 있지만, NSStatusItem 기반 메뉴바 앱의
+    표준 동작이라 받아들임. 두 번째 클릭에서 정상 오픈.)
+    명시적 닫기 경로:
+      - 트레이 아이콘 재클릭 (토글)
+      - ESC 키
+      - ❌ 종료 버튼
+    """
 
     W        = 360
     MAX_H    = 640
@@ -368,8 +379,10 @@ class Popover(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
-            Qt.WindowType.Popup |
-            Qt.WindowType.FramelessWindowHint
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.rows: dict[str, StockRow] = {}
@@ -643,7 +656,6 @@ class Popover(QWidget):
         y = anchor_global_pos.y() + 10
 
         # 화면 경계 안으로 보정
-        from PyQt6.QtWidgets import QApplication
         screen = QApplication.screenAt(anchor_global_pos) or QApplication.primaryScreen()
         sg = screen.availableGeometry()
         x = max(sg.x() + 4, min(x, sg.x() + sg.width() - target_w - 4))
@@ -653,3 +665,10 @@ class Popover(QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    # ── 키보드 ────────────────────────────────────────────────────────────
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+            return
+        super().keyPressEvent(event)
