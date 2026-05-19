@@ -268,8 +268,11 @@ class UpdateDialog(QDialog):
         except Exception as e:
             self._show_error(f"업데이트 실행에 실패했습니다: {e}")
             return
-        # 메인 앱 종료 — 헬퍼가 폴링으로 종료를 감지하고 교체 진행
-        QApplication.instance().quit()
+        # 모달 다이얼로그의 exec() 를 먼저 종료해야 nested event loop 가 풀린다.
+        # app.quit() 만 호출하면 외부 loop 만 종료 예약되고 modal 은 그대로 살아있어
+        # 프로세스가 끝나지 않음 → 헬퍼가 PID wait timeout 으로 떨어지는 원인.
+        self.accept()
+        QTimer.singleShot(0, QApplication.instance().quit)
 
     def _cancel_download(self):
         self._cancel_event.set()

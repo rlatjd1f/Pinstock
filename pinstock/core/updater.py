@@ -220,6 +220,14 @@ def download_zip(
 _WINDOWS_UPDATER_CMD = r"""@echo off
 setlocal EnableDelayedExpansion
 
+REM 외부 명령은 시스템 절대 경로로 박는다. 사용자 PATH 에 Git Bash / MSYS2 의 GNU
+REM 동명 도구(find, tar, timeout 등) 가 먼저 잡히면 동작이 완전히 달라져서 헬퍼가
+REM 무한 hang 하거나 ZIP 추출이 실패한다.
+set "WIN_TASKLIST=%SystemRoot%\System32\tasklist.exe"
+set "WIN_FIND=%SystemRoot%\System32\find.exe"
+set "WIN_PING=%SystemRoot%\System32\ping.exe"
+set "WIN_TAR=%SystemRoot%\System32\tar.exe"
+
 set "MAIN_PID=%~1"
 set "INSTALL_DIR=%~2"
 set "NEW_ZIP=%~3"
@@ -229,19 +237,21 @@ set "OLD_DIR=%INSTALL_DIR%.old"
 REM 1) wait for main process to exit (max 30s)
 set /a TRIES=0
 :wait
-tasklist /FI "PID eq %MAIN_PID%" 2>NUL | find "%MAIN_PID%" >NUL
+"%WIN_TASKLIST%" /FI "PID eq %MAIN_PID%" 2>NUL | "%WIN_FIND%" "%MAIN_PID%" >NUL
 if errorlevel 1 goto exited
 set /a TRIES+=1
 if !TRIES! GEQ 30 (
     >"%ERR_LOG%" echo ERR_WAIT_TIMEOUT pid=%MAIN_PID%
     exit /b 1
 )
-timeout /t 1 /nobreak >NUL
+REM ping 으로 ~1초 대기. timeout 은 stdin 리다이렉트 시 즉시 종료(입력 리디렉션
+REM 미지원) 라서 헬퍼가 콘솔 없이 실행될 때 sleep 으로 안 쓰임.
+"%WIN_PING%" -n 2 127.0.0.1 >NUL
 goto wait
 
 :exited
 REM extra delay for file handles to release
-timeout /t 1 /nobreak >NUL
+"%WIN_PING%" -n 2 127.0.0.1 >NUL
 
 REM 2) backup current install dir to .old
 if exist "%OLD_DIR%" rmdir /s /q "%OLD_DIR%"
@@ -252,10 +262,8 @@ if errorlevel 1 (
 )
 
 REM 3) recreate install dir and extract zip
-REM   Windows 10 1803+ 내장 tar.exe(bsdtar) 만 ZIP 을 지원. PATH 가 Git Bash 의 GNU tar
-REM   를 먼저 잡는 경우가 있어 시스템 tar 의 절대 경로로 박는다.
 mkdir "%INSTALL_DIR%"
-"%SystemRoot%\System32\tar.exe" -xf "%NEW_ZIP%" -C "%INSTALL_DIR%"
+"%WIN_TAR%" -xf "%NEW_ZIP%" -C "%INSTALL_DIR%"
 if errorlevel 1 (
     >"%ERR_LOG%" echo ERR_EXTRACT zip=%NEW_ZIP%
     goto rollback
@@ -307,12 +315,20 @@ def _write_windows_updater_script() -> Path:
 
 
 def launch_updater_windows(install_dir: Path, new_zip: Path) -> None:
-    """헬퍼 .cmd 를 분리 실행. 호출 직후 메인 앱은 즉시 종료해야 함."""
+    """헬퍼 .cmd 를 분리 실행. 호출 직후 메인 앱은 즉시 종료해야 함.
+
+    플래그 선택 근거:
+      CREATE_NO_WINDOW          — 콘솔 창 표시 X (콘솔 자체는 할당되므로 내부의
+                                  tasklist/find/ping 같은 콘솔 앱은 정상 동작).
+      CREATE_NEW_PROCESS_GROUP  — 부모(Pinstock.exe) 가 quit 해도 헬퍼는 살아남음.
+
+    DETACHED_PROCESS 는 콘솔 자체를 제거하여 tasklist/find 파이프가 hang 하는
+    이슈가 있어 사용하지 않는다.
+    """
     cmd_path = _write_windows_updater_script()
     pid = os.getpid()
     err_log = _error_log_path()
 
-    DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     CREATE_NO_WINDOW = 0x08000000
 
@@ -325,7 +341,7 @@ def launch_updater_windows(install_dir: Path, new_zip: Path) -> None:
             str(new_zip),
             str(err_log),
         ],
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+        creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
