@@ -15,14 +15,18 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QObject, QTimer, QEvent, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
 
-from ..core.api import fetch_stock, fetch_minute_chart, fetch_daily_chart, fetch_usd_krw_rate
+from ..core.api import (
+    fetch_stock, fetch_minute_chart, fetch_daily_chart,
+    fetch_us_stock, fetch_us_minute_chart, fetch_us_daily_chart,
+    fetch_usd_krw_rate,
+)
 from ..core.portfolio import is_us_stock, portfolio_totals
 from ..core.storage import (
     CONFIG_FILE, BACKUP_FILE,
     export_stocks_to_excel, import_stocks_from_excel, normalize_stocks_schema,
 )
 from ..ui_windows.manage_dialog import (
-    StockDialog, ManageStocksDialog, ImportModeDialog,
+    StockDialog, ManageStocksDialog, ImportModeDialog, fetch_quote_for_stock,
 )
 
 from .popover import Popover
@@ -40,9 +44,10 @@ class StockFetcher(QObject):
 
     STAGGER_MS = 600
 
-    def __init__(self, code: str, stagger_idx: int = 0, parent: QObject | None = None):
+    def __init__(self, stock: dict, stagger_idx: int = 0, parent: QObject | None = None):
         super().__init__(parent)
-        self.code = code
+        self.stock = stock
+        self.code = stock["code"]
         self._prev_change_price: int = 0
 
         self.price_timer = QTimer(self)
@@ -60,17 +65,20 @@ class StockFetcher(QObject):
         self._fetch_chart()
 
     def _fetch_price(self):
-        result = fetch_stock(self.code)
+        result = fetch_us_stock(self.code) if is_us_stock(self.stock) else fetch_stock(self.code)
         if result:
             self._prev_change_price = int(result.get("change_price", 0))
             self.price_updated.emit(self.code, result)
 
     def _fetch_chart(self):
-        chart = fetch_minute_chart(self.code)
+        if is_us_stock(self.stock):
+            chart = fetch_us_minute_chart(self.code)
+        else:
+            chart = fetch_minute_chart(self.code)
         if chart and len(chart["prices"]) >= 2:
             self.minute_updated.emit(self.code, chart["prices"], chart["open"])
         else:
-            daily = fetch_daily_chart(self.code)
+            daily = fetch_us_daily_chart(self.code) if is_us_stock(self.stock) else fetch_daily_chart(self.code)
             if daily:
                 self.daily_updated.emit(self.code, daily["candles"])
 
@@ -116,6 +124,7 @@ class MacAppManager(QObject):
         self.hide_master_btn_pos: list | None = None
         self.assets_hidden: bool = False
         self.popover_opacity: float = 1.0
+        self.market_filter: str = "ALL"
         self._load_config()
 
         self.fx_timer = QTimer(self)
@@ -134,6 +143,7 @@ class MacAppManager(QObject):
         self.popover.quit_requested.connect(self.app.quit)
         self.popover.edit_requested.connect(self._on_edit_request)
         self.popover.delete_requested.connect(self._on_delete_request)
+        self.popover.market_filter_changed.connect(self._on_market_filter_changed)
         self.popover.assets_hidden_changed.connect(self._on_assets_hidden_changed)
         self.popover.opacity_changed.connect(self._on_opacity_changed)
         self.popover.closed_by_user.connect(self._on_popover_closed_by_user)
@@ -141,6 +151,7 @@ class MacAppManager(QObject):
         # 로드한 자산 숨김 / 팝오버 투명도 상태를 팝오버에 한 번 주입
         self.popover.set_assets_hidden(self.assets_hidden)
         self.popover.set_opacity(self.popover_opacity)
+        self.popover.set_market_filter(self.market_filter)
 
         # 초기 데이터 푸시
         self._sync_popover_stocks()
@@ -148,7 +159,7 @@ class MacAppManager(QObject):
 
         # 종목별 폴링 시작
         for i, s in enumerate(self.stocks):
-            self._spawn_fetcher(s["code"], stagger_idx=i)
+            self._spawn_fetcher(s, stagger_idx=i)
         self._sync_fx_timer()
 
     # ── 앱 active/inactive 트랜지션 ───────────────────────────────────────
@@ -209,8 +220,9 @@ class MacAppManager(QObject):
             self._user_wants_popover_visible = True
 
     # ── 폴링 워커 관리 ─────────────────────────────────────────────────────
-    def _spawn_fetcher(self, code: str, stagger_idx: int = 0):
-        f = StockFetcher(code, stagger_idx, parent=self)
+    def _spawn_fetcher(self, stock: dict, stagger_idx: int = 0):
+        code = stock["code"]
+        f = StockFetcher(stock, stagger_idx, parent=self)
         f.price_updated.connect(self._on_price_updated)
         f.minute_updated.connect(self._on_minute_updated)
         f.daily_updated.connect(self._on_daily_updated)
@@ -274,12 +286,24 @@ class MacAppManager(QObject):
             self.popover.update_summary(0, 0)
             return
 
+        stocks = [s for s in self.stocks if self._matches_market_filter(s)]
         totals = portfolio_totals(
-            self.stocks,
+            stocks,
             current_prices=self.current_prices,
             usd_krw_rate=self.usd_krw_rate,
         )
         self.popover.update_summary(totals["total_invest"], totals["total_eval"])
+
+    def _matches_market_filter(self, stock: dict) -> bool:
+        if self.market_filter == "ALL":
+            return True
+        market = "US" if is_us_stock(stock) else "KR"
+        return market == self.market_filter
+
+    def _on_market_filter_changed(self, market: str):
+        self.market_filter = market if market in {"ALL", "KR", "US"} else "ALL"
+        self._sync_popover_stocks()
+        self._recompute_summary()
 
     def _fetch_usd_krw_rate(self):
         result = fetch_usd_krw_rate()
@@ -373,7 +397,7 @@ class MacAppManager(QObject):
             QMessageBox.information(None, "알림", f"'{code}'는 이미 추가되어 있습니다.")
             return
 
-        result = fetch_stock(code)
+        result = fetch_quote_for_stock(d)
         if not result:
             QMessageBox.warning(
                 None, "조회 실패",
@@ -389,7 +413,7 @@ class MacAppManager(QObject):
 
         # 팝오버 재구성 + 폴링 시작
         self._sync_popover_stocks()
-        self._spawn_fetcher(code, stagger_idx=0)
+        self._spawn_fetcher(d, stagger_idx=0)
         self._recompute_summary()
 
     # ── 종목 일괄 관리 ────────────────────────────────────────────────────
@@ -417,7 +441,7 @@ class MacAppManager(QObject):
         added_idx = 0
         for s in new_stocks:
             if s["code"] not in old_codes:
-                self._spawn_fetcher(s["code"], stagger_idx=added_idx)
+                self._spawn_fetcher(s, stagger_idx=added_idx)
                 added_idx += 1
 
         self.stocks = new_stocks
@@ -437,6 +461,8 @@ class MacAppManager(QObject):
         new = dlg.get_data()
         target["avg_price"] = new["avg_price"]
         target["quantity"]  = new["quantity"]
+        if "buy_exchange_rate" in new:
+            target["buy_exchange_rate"] = new["buy_exchange_rate"]
         self._save_config()
         self._sync_popover_stocks()
         self._recompute_summary()
@@ -598,4 +624,4 @@ class MacAppManager(QObject):
         self._recompute_summary()
 
         for i, s in enumerate(self.stocks):
-            self._spawn_fetcher(s["code"], stagger_idx=i)
+            self._spawn_fetcher(s, stagger_idx=i)

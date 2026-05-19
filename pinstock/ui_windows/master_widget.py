@@ -4,7 +4,7 @@ import sys
 
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication,
-    QSlider, QStyle, QStyleOptionSlider,
+    QPushButton, QSlider, QStyle, QStyleOptionSlider,
 )
 from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor
@@ -233,6 +233,7 @@ class MasterWidget(QWidget):
     SLIDER_RIGHT_MARGIN = 14   # 카드 우측 여백과 동일 (슬라이더 윈도우 우측 정렬용)
 
     opacity_changed = pyqtSignal(float)   # 0.1 ~ 1.0
+    market_filter_changed = pyqtSignal(str)   # ALL / KR / US
 
     def __init__(self, width: int):
         super().__init__()
@@ -244,6 +245,7 @@ class MasterWidget(QWidget):
         self._drag_locked: bool = False   # True 면 본체 드래그로 위치 이동 불가 (잠금 모드)
         self.is_expanded: bool = False
         self.holdings: list[dict] = []   # [{"name", "profit", "profit_rate"}, ...]
+        self._market_filter: str = "ALL"
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
@@ -283,6 +285,14 @@ class MasterWidget(QWidget):
         self.footer = QWidget(self.card)
         self.footer.setGeometry(0, self.GRID_H, self.W, self.FOOTER_H)
         self.footer.setStyleSheet("background: transparent;")
+        footer_layout = QHBoxLayout(self.footer)
+        footer_layout.setContentsMargins(12, 1, 120, 1)
+        footer_layout.setSpacing(4)
+        self.market_filter_buttons: dict[str, QPushButton] = {}
+        for text, market in (("전체", "ALL"), ("한국", "KR"), ("미국", "US")):
+            btn = self._make_market_filter_btn(text, market)
+            footer_layout.addWidget(btn)
+        footer_layout.addStretch()
 
         # 확장 패널 (클릭 시 종목별 손익 표시) — 초기 숨김
         self.expand_panel = QWidget(self.card)
@@ -296,6 +306,53 @@ class MasterWidget(QWidget):
 
         # 잠금 표시 자물쇠 오버레이 (별도 top-level 윈도우, 항상 100% 불투명).
         self.lock_overlay = _LockOverlay()
+
+    def _make_market_filter_btn(self, text: str, market: str) -> QPushButton:
+        btn = QPushButton(text, self.footer)
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda _, m=market: self._set_market_filter(m, emit=True))
+        self.market_filter_buttons[market] = btn
+        active = market == self._market_filter
+        btn.setChecked(active)
+        self._apply_market_filter_btn_style(btn, active)
+        return btn
+
+    def _apply_market_filter_btn_style(self, btn: QPushButton, active: bool):
+        if active:
+            bg = C["blue"]
+            fg = C["bg"]
+            hover = "#b4befe"
+        else:
+            bg = "transparent"
+            fg = C["subtext"]
+            hover = C["surface"]
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg};
+                color: {fg};
+                border: none;
+                border-radius: 5px;
+                padding: 2px 6px;
+                font-size: 10px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background: {hover}; }}
+        """)
+
+    def _set_market_filter(self, market: str, *, emit: bool = False):
+        if market not in {"ALL", "KR", "US"}:
+            market = "ALL"
+        self._market_filter = market
+        for key, btn in self.market_filter_buttons.items():
+            active = key == market
+            btn.setChecked(active)
+            self._apply_market_filter_btn_style(btn, active)
+        if emit:
+            self.market_filter_changed.emit(market)
+
+    def set_market_filter(self, market: str):
+        self._set_market_filter(market, emit=False)
 
     # ── 투명도 슬라이더 (우측 하단) ───────────────────────────────────────
     _GROOVE_QSS = """

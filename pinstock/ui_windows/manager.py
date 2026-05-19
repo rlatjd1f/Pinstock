@@ -29,7 +29,7 @@ def _resolve_app_icon() -> QIcon:
         return QIcon(str(ico))
     return QIcon()
 
-from ..core.api import fetch_stock, fetch_usd_krw_rate
+from ..core.api import fetch_usd_krw_rate
 from ..core.portfolio import is_us_stock, portfolio_totals
 from ..core.storage import (
     CONFIG_FILE, BACKUP_FILE,
@@ -39,7 +39,9 @@ from .theme import C, TRAY_MENU_STYLE
 from .floating_widget import StockWidget
 from .master_widget import MasterWidget
 from .toggle_button import ToggleButton
-from .manage_dialog import StockDialog, ManageStocksDialog, ImportModeDialog
+from .manage_dialog import (
+    StockDialog, ManageStocksDialog, ImportModeDialog, fetch_quote_for_stock,
+)
 
 
 # ─── 전체 위젯 관리자 ─────────────────────────────────────────────────────────
@@ -64,6 +66,7 @@ class WidgetManager:
         self.assets_hidden: bool = False
         self.popover_opacity: float = 1.0
         self.usd_krw_rate: float | None = None
+        self.market_filter: str = "ALL"
 
         # 투명도 슬라이더가 멈춘 뒤에만 click-through 토글 + 설정 저장 — 50% 경계를
         # 지날 때 setWindowFlag 로 윈도우가 재생성되며 발생하던 멈칫을 없앤다.
@@ -82,13 +85,15 @@ class WidgetManager:
     # ── 전체 위젯 표시/숨김 토글 ─────────────────────────────────────────
     def toggle_visibility(self):
         self.is_hidden = not self.is_hidden
-        # 표시 복귀 시 종목별 hidden 상태는 보존 (hidden=True 종목은 계속 숨김)
-        hidden_by_code = {s["code"]: bool(s.get("hidden", False)) for s in self.stocks}
+        # 표시 복귀 시 종목별 hidden 상태와 시장 필터를 함께 보존
+        stock_by_code = {s["code"]: s for s in self.stocks}
         for code, w in self.widgets.items():
             if self.is_hidden:
                 w.hide()
-            elif not hidden_by_code.get(code, False):
+            elif self._is_stock_visible(stock_by_code.get(code, {})):
                 w.show()
+            else:
+                w.hide()
         # 마스터 위젯도 전체 토글에 함께 따름. 단, 마스터 개별 숨김 상태는 보존.
         if self.master_widget:
             if self.is_hidden:
@@ -131,6 +136,8 @@ class WidgetManager:
         # 위젯을 현재 속한 모니터별로 그룹화 (stocks 순서 보존)
         groups: dict = {}
         for s in self.stocks:
+            if not self._is_stock_visible(s):
+                continue
             w = self.widgets.get(s["code"])
             if not w:
                 continue
@@ -166,9 +173,10 @@ class WidgetManager:
             btn_x = mx - btn_size - GAP
             top_y = my
             bot_y = my + btn_size + GAP
-        elif self.stocks:
-            # 마지막 종목 위젯 위치 (방금 위에서 self.stocks[-1]["pos"]에 저장됨)
-            last_pos = self.stocks[-1].get("pos") or [0, 0]
+        elif groups:
+            # 마지막 표시 종목 위젯 위치 (방금 위에서 pos에 저장됨)
+            last_item = list(groups.values())[-1][-1][0]
+            last_pos = last_item.get("pos") or [0, 0]
             btn_x = last_pos[0] - btn_size - GAP
             top_y = last_pos[1]
             bot_y = top_y + btn_size + GAP
@@ -218,6 +226,35 @@ class WidgetManager:
             w.set_width(new_w)
         if self.master_widget:
             self.master_widget.set_uniform_width(new_w)
+
+    def _matches_market_filter(self, stock: dict) -> bool:
+        if self.market_filter == "ALL":
+            return True
+        market = "US" if is_us_stock(stock) else "KR"
+        return market == self.market_filter
+
+    def _is_stock_visible(self, stock: dict) -> bool:
+        if not stock:
+            return False
+        return not stock.get("hidden", False) and self._matches_market_filter(stock)
+
+    def _on_market_filter_changed(self, market: str):
+        self.market_filter = market if market in {"ALL", "KR", "US"} else "ALL"
+        self._apply_market_filter()
+        self._recompute_master()
+
+    def _apply_market_filter(self):
+        for s in self.stocks:
+            w = self.widgets.get(s["code"])
+            if not w:
+                continue
+            if self.is_hidden or not self._is_stock_visible(s):
+                w.hide()
+            else:
+                w.show()
+        self._compact_visible_widgets()
+        if self.master_widget:
+            self.master_widget.set_market_filter(self.market_filter)
 
     # ── 트레이 ─────────────────────────────────────────────────────────────
     def _setup_tray(self):
@@ -371,13 +408,40 @@ class WidgetManager:
     # ── 위젯 생성 ──────────────────────────────────────────────────────────
     def _spawn_all(self):
         self.uniform_w = self._calc_uniform_width()
-        for i, s in enumerate(self.stocks):
+        visible_idx = 0
+        for s in self.stocks:
             default_x = 60
-            default_y = 60 + i * (StockWidget.COMPACT_H + 12)
-            self._spawn_widget(s, default_x, default_y, stagger_idx=i)
+            default_y = 60 + visible_idx * (StockWidget.COMPACT_H + 12)
+            self._spawn_widget(s, default_x, default_y, stagger_idx=visible_idx)
+            if self._is_stock_visible(s):
+                visible_idx += 1
         self._sync_fx_timer()
         self._spawn_master()
         self._spawn_toggle_buttons()
+
+    def _compact_visible_widgets(self):
+        if not self.widgets:
+            return
+        visible = [s for s in self.stocks if self._is_stock_visible(s)]
+        if not visible:
+            return
+        anchor_pos = None
+        for s in visible:
+            w = self.widgets.get(s["code"])
+            if w:
+                anchor_pos = w.pos()
+                break
+        base_x = anchor_pos.x() if anchor_pos else 60
+        base_y = anchor_pos.y() if anchor_pos else 60
+        step_y = StockWidget.COMPACT_H + 12
+        for visible_idx, s in enumerate(visible):
+            w = self.widgets.get(s["code"])
+            if not w:
+                continue
+            x = base_x
+            y = base_y + visible_idx * step_y
+            w.move(x, y)
+            s["pos"] = [x, y]
 
     def _spawn_toggle_buttons(self):
         """몰컴 모드용 빠른 숨기기 토글 버튼 두 개를 화면에 띄움."""
@@ -427,8 +491,8 @@ class WidgetManager:
         # 투명도 50% 이하면 클릭이 통과되는 모드로 (show 전이라 flag 만 set 해두면 됨)
         if self._is_click_through_opacity(self.popover_opacity):
             w.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
-        # 종목별 hidden 표시 + 전체 숨김 상태 둘 다 고려
-        if not stock.get("hidden", False) and not self.is_hidden:
+        # 종목별 hidden 표시 + 시장 필터 + 전체 숨김 상태를 함께 고려
+        if self._is_stock_visible(stock) and not self.is_hidden:
             w.show()
         self.widgets[code] = w
 
@@ -443,6 +507,8 @@ class WidgetManager:
             self.master_widget = MasterWidget(width=self.uniform_w)
             self.master_widget.set_opacity(self.popover_opacity)
             self.master_widget.opacity_changed.connect(self._on_opacity_changed)
+            self.master_widget.market_filter_changed.connect(self._on_market_filter_changed)
+            self.master_widget.set_market_filter(self.market_filter)
             # 시작 시 저장된 투명도가 임계치 이하면 show 전에 미리 click-through 활성화
             # (슬라이더는 별도 윈도우라 영향 없음).
             if self._is_click_through_opacity(self.popover_opacity):
@@ -548,7 +614,7 @@ class WidgetManager:
             if w.current_price
         }
         totals = portfolio_totals(
-            self.stocks,
+            [s for s in self.stocks if self._matches_market_filter(s)],
             current_prices=current_prices,
             usd_krw_rate=self.usd_krw_rate,
         )
@@ -591,7 +657,7 @@ class WidgetManager:
             return
 
         # 종목명 미리 조회
-        result = fetch_stock(code)
+        result = fetch_quote_for_stock(d)
         if not result:
             QMessageBox.warning(None, "조회 실패", f"종목코드 '{code}'를 찾을 수 없습니다.\n코드를 다시 확인해 주세요.")
             return
@@ -604,8 +670,12 @@ class WidgetManager:
         # 새 종목명이 더 길면 모든 위젯 너비 재조정 (새 위젯도 이 값으로 생성됨)
         self._apply_uniform_width()
 
-        # 새 위젯 위치: 기존 위젯들 아래. 추가된 위젯이라 stagger 필요 없음(즉시 시작)
-        ny = 60 + len(self.widgets) * (StockWidget.COMPACT_H + 12)
+        # 새 위젯 위치: 현재 표시 필터에서 보이는 위젯들 아래.
+        visible_count = sum(
+            1 for s in self.stocks
+            if s["code"] != code and self._is_stock_visible(s)
+        )
+        ny = 60 + visible_count * (StockWidget.COMPACT_H + 12)
         self._spawn_widget(d, 60, ny, stagger_idx=0)
 
         self._recompute_master()
@@ -646,7 +716,11 @@ class WidgetManager:
         added_idx = 0
         for s in new_stocks:
             if s["code"] not in old_map:
-                ny = 60 + len(self.widgets) * (StockWidget.COMPACT_H + 12)
+                visible_count = sum(
+                    1 for stock in new_stocks
+                    if stock["code"] in self.widgets and self._is_stock_visible(stock)
+                )
+                ny = 60 + visible_count * (StockWidget.COMPACT_H + 12)
                 self._spawn_widget(s, 60, ny, stagger_idx=added_idx)
                 added_idx += 1
 
@@ -655,22 +729,20 @@ class WidgetManager:
             code = s["code"]
             if code in old_map and code in self.widgets:
                 w = self.widgets[code]
-                w.data["avg_price"] = s["avg_price"]
-                w.data["quantity"]  = s["quantity"]
-                w.data["hidden"]    = bool(s.get("hidden", False))
+                w.data.update(s)
                 if w.current_price:
                     w._update_detail(w.current_price)
-                # hidden 상태에 따라 표시 토글 (전체 숨김 모드면 건드리지 않음)
-                if not self.is_hidden:
-                    if w.data["hidden"]:
-                        w.hide()
-                    else:
-                        w.show()
+                # hidden 상태와 현재 시장 필터를 함께 반영
+                if self.is_hidden or not self._is_stock_visible(s):
+                    w.hide()
+                else:
+                    w.show()
 
         # 순서 + 저장 + 너비 재계산
         self.stocks = new_stocks
         self._sync_fx_timer()
         self._apply_uniform_width()
+        self._apply_market_filter()
         self._save_config()
         self._recompute_master()
 
