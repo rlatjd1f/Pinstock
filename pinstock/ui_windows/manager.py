@@ -32,7 +32,7 @@ def _resolve_app_icon() -> QIcon:
 from ..core.api import fetch_stock
 from ..core.storage import (
     CONFIG_FILE, BACKUP_FILE,
-    export_stocks_to_excel, import_stocks_from_excel,
+    export_stocks_to_excel, import_stocks_from_excel, normalize_stocks_schema,
 )
 from .theme import C, TRAY_MENU_STYLE
 from .floating_widget import StockWidget
@@ -295,9 +295,9 @@ class WidgetManager:
 
         if isinstance(data, list):
             # v1 → 종목만 있음, 마스터 설정은 기본값
-            self.stocks = data
+            self.stocks = normalize_stocks_schema(data)
         elif isinstance(data, dict):
-            self.stocks = data.get("stocks", []) or []
+            self.stocks = normalize_stocks_schema(data.get("stocks", []) or [])
             master = data.get("master") or {}
             self.master_visible = bool(master.get("visible", True))
             pos = master.get("pos")
@@ -325,6 +325,7 @@ class WidgetManager:
                 self.popover_opacity = 1.0
 
     def _save_config(self):
+        self.stocks = normalize_stocks_schema(self.stocks)
         data = {
             "stocks": self.stocks,
             "master": {
@@ -614,6 +615,7 @@ class WidgetManager:
         if not dlg.exec():
             return
         new_stocks = dlg.get_stocks()
+        new_stocks = normalize_stocks_schema(new_stocks)
 
         old_map = {s["code"]: s for s in self.stocks}
         new_map = {s["code"]: s for s in new_stocks}
@@ -772,7 +774,7 @@ class WidgetManager:
 
         # 새 stocks 리스트 구성
         if mode == "overwrite":
-            new_stocks = imported   # pos 없음 → 다시 spawn 시 기본 위치
+            new_stocks = normalize_stocks_schema(imported)   # pos 없음 → 다시 spawn 시 기본 위치
         else:
             by_code = {s["code"]: s for s in self.stocks}
             new_stocks = []
@@ -786,6 +788,7 @@ class WidgetManager:
             for s in self.stocks:
                 if s["code"] not in imported_codes:
                     new_stocks.append(s)
+            new_stocks = normalize_stocks_schema(new_stocks)
 
         self._rebuild_widgets(new_stocks)
 
@@ -802,7 +805,7 @@ class WidgetManager:
             w.close()
         self.widgets.clear()
 
-        self.stocks = new_stocks
+        self.stocks = normalize_stocks_schema(new_stocks)
         self.uniform_w = self._calc_uniform_width()
 
         for i, s in enumerate(self.stocks):

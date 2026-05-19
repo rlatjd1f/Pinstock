@@ -190,6 +190,8 @@ class StockDialog(QDialog):
     def get_data(self) -> dict:
         return {
             "code":      self.code_edit.text().strip().upper(),
+            "market":    "KR",
+            "currency":  "KRW",
             "avg_price": self.avg_spin.value(),
             "quantity":  self.qty_spin.value(),
         }

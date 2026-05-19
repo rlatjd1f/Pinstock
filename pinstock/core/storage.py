@@ -23,6 +23,42 @@ CONFIG_FILE = str(_config_dir() / "stocks.json")
 BACKUP_FILE = CONFIG_FILE + ".bak"
 
 
+# ─── 종목 스키마 기본값 ─────────────────────────────────────────────────────
+MARKET_KR = "KR"
+MARKET_US = "US"
+CURRENCY_KRW = "KRW"
+CURRENCY_USD = "USD"
+
+
+def normalize_stock_schema(stock: dict) -> dict:
+    """기존 stocks.json 항목에 시장/통화 기본값을 보강한다.
+
+    미국 주식 지원 전의 기존 데이터는 market/currency 필드가 없으므로 한국
+    주식으로 취급한다. 알 수 없는 부가 필드(pos, hidden 등)는 그대로 보존한다.
+    """
+    normalized = dict(stock)
+    market = str(normalized.get("market") or MARKET_KR).strip().upper()
+    if market not in {MARKET_KR, MARKET_US}:
+        market = MARKET_KR
+    normalized["market"] = market
+
+    default_currency = CURRENCY_USD if market == MARKET_US else CURRENCY_KRW
+    currency = str(normalized.get("currency") or default_currency).strip().upper()
+    normalized["currency"] = currency or default_currency
+
+    if market == MARKET_US and "buy_exchange_rate" in normalized:
+        try:
+            normalized["buy_exchange_rate"] = float(normalized["buy_exchange_rate"])
+        except (TypeError, ValueError):
+            normalized.pop("buy_exchange_rate", None)
+
+    return normalized
+
+
+def normalize_stocks_schema(stocks: list[dict]) -> list[dict]:
+    return [normalize_stock_schema(s) for s in stocks if isinstance(s, dict)]
+
+
 # ─── 레거시 위치(레포 루트/CWD)에서 새 위치로 1회 자동 이전 ───────────────
 def migrate_legacy_config() -> None:
     """저장소 루트(또는 현재 작업 디렉토리)에 있던 stocks.json 을 새 위치로 1회 이전.
@@ -232,12 +268,12 @@ def import_stocks_from_excel(path: str) -> list[dict]:
 
         name = str(raw_name).strip() if raw_name is not None and str(raw_name).strip() else code
 
-        stocks.append({
+        stocks.append(normalize_stock_schema({
             "code":      code,
             "name":      name,
             "avg_price": avg_price,
             "quantity":  quantity,
-        })
+        }))
         seen_codes.add(code)
 
     if errors:
@@ -249,4 +285,4 @@ def import_stocks_from_excel(path: str) -> list[dict]:
     if not stocks:
         raise ValueError("가져올 종목이 없습니다. (데이터 행을 찾지 못했습니다)")
 
-    return stocks
+    return normalize_stocks_schema(stocks)

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog
 from ..core.api import fetch_stock, fetch_minute_chart, fetch_daily_chart
 from ..core.storage import (
     CONFIG_FILE, BACKUP_FILE,
-    export_stocks_to_excel, import_stocks_from_excel,
+    export_stocks_to_excel, import_stocks_from_excel, normalize_stocks_schema,
 )
 from ..ui_windows.manage_dialog import (
     StockDialog, ManageStocksDialog, ImportModeDialog,
@@ -291,9 +291,9 @@ class MacAppManager(QObject):
             return
 
         if isinstance(data, list):
-            self.stocks = data
+            self.stocks = normalize_stocks_schema(data)
         elif isinstance(data, dict):
-            self.stocks = data.get("stocks", []) or []
+            self.stocks = normalize_stocks_schema(data.get("stocks", []) or [])
             master = data.get("master") or {}
             self.master_visible = bool(master.get("visible", True))
             pos = master.get("pos")
@@ -320,6 +320,7 @@ class MacAppManager(QObject):
 
     def _save_config(self):
         # Windows 와 호환되는 스키마 — Mac 에서는 의미 없는 필드도 보존만 함
+        self.stocks = normalize_stocks_schema(self.stocks)
         data = {
             "stocks": self.stocks,
             "master": {
@@ -380,6 +381,7 @@ class MacAppManager(QObject):
         if not dlg.exec():
             return
         new_stocks = dlg.get_stocks()
+        new_stocks = normalize_stocks_schema(new_stocks)
 
         old_codes = {s["code"] for s in self.stocks}
         new_codes = {s["code"] for s in new_stocks}
@@ -537,7 +539,7 @@ class MacAppManager(QObject):
 
         # 새 stocks 구성
         if mode == "overwrite":
-            new_stocks = imported
+            new_stocks = normalize_stocks_schema(imported)
         else:
             by_code = {s["code"]: s for s in self.stocks}
             new_stocks = []
@@ -549,6 +551,7 @@ class MacAppManager(QObject):
             for s in self.stocks:
                 if s["code"] not in imported_codes:
                     new_stocks.append(s)
+            new_stocks = normalize_stocks_schema(new_stocks)
 
         self._rebuild(new_stocks)
 
@@ -564,7 +567,7 @@ class MacAppManager(QObject):
             self._kill_fetcher(code)
         self.current_prices.clear()
 
-        self.stocks = new_stocks
+        self.stocks = normalize_stocks_schema(new_stocks)
         self._save_config()
         self._sync_popover_stocks()
         self._recompute_summary()
