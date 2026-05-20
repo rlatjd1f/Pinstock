@@ -426,14 +426,33 @@ class WidgetManager:
         visible = [s for s in self.stocks if self._is_stock_visible(s)]
         if not visible:
             return
-        anchor_pos = None
+        anchor_widget = None
         for s in visible:
             w = self.widgets.get(s["code"])
             if w:
-                anchor_pos = w.pos()
+                anchor_widget = w
                 break
+        anchor_pos = anchor_widget.pos() if anchor_widget else None
+        anchor_screen = (
+            QApplication.screenAt(anchor_widget.frameGeometry().center())
+            if anchor_widget else None
+        )
         base_x = anchor_pos.x() if anchor_pos else 60
         base_y = anchor_pos.y() if anchor_pos else 60
+        top_y = None
+        for s in self.stocks:
+            if s.get("hidden", False):
+                continue
+            w = self.widgets.get(s["code"])
+            if not w:
+                continue
+            screen = QApplication.screenAt(w.frameGeometry().center())
+            if anchor_screen is not None and screen is not anchor_screen:
+                continue
+            y = w.pos().y()
+            top_y = y if top_y is None else min(top_y, y)
+        if top_y is not None:
+            base_y = top_y
         step_y = StockWidget.COMPACT_H + 12
         for visible_idx, s in enumerate(visible):
             w = self.widgets.get(s["code"])

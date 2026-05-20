@@ -218,7 +218,7 @@ class MasterWidget(QWidget):
     우측 하단에 전체 위젯 투명도를 조절하는 슬라이더."""
 
     GRID_H   = 96    # 2×2 요약 그리드 영역 높이
-    FOOTER_H = 20    # 우측 하단 투명도 슬라이더 영역 높이
+    FOOTER_H = 25    # 우측 하단 필터/투명도 슬라이더 영역 높이
     H        = GRID_H + FOOTER_H   # compact 카드 전체 높이
     RADIUS   = 13
     DRAG_THRESHOLD = 4
@@ -286,7 +286,7 @@ class MasterWidget(QWidget):
         self.footer.setGeometry(0, self.GRID_H, self.W, self.FOOTER_H)
         self.footer.setStyleSheet("background: transparent;")
         footer_layout = QHBoxLayout(self.footer)
-        footer_layout.setContentsMargins(12, 1, 120, 1)
+        footer_layout.setContentsMargins(12, 1, 120, 6)
         footer_layout.setSpacing(4)
         self.market_filter_buttons: dict[str, QPushButton] = {}
         for text, market in (("전체", "ALL"), ("한국", "KR"), ("미국", "US")):
