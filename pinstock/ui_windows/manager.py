@@ -591,7 +591,9 @@ class WidgetManager:
             top_y = y if top_y is None else min(top_y, y)
         if top_y is not None:
             base_y = top_y
-        step_y = StockWidget.COMPACT_H + 12
+        # GAP은 reset_positions()의 같은 column 내 세로 간격(4)과 일치해야
+        # 필터 변경 후에도 위치 초기화로 맞춘 간격이 유지된다.
+        step_y = StockWidget.COMPACT_H + 4
         for visible_idx, s in enumerate(visible):
             w = self.widgets.get(s["code"])
             if not w:
