@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QObject, QTimer, QEvent, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog, QMenuBar
+from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog, QMenu, QMenuBar
 
 from ..__version__ import __version__
 from ..core import updater
@@ -155,9 +155,11 @@ class MacAppManager(QObject):
         self.popover = Popover()
         self.menubar = MenuBarIcon(app, parent=self)
         self._build_app_menu()
+        self._build_tray_menu()
 
         # 시그널 연결
         self.menubar.toggle_popover_requested.connect(self._on_toggle_popover)
+        self.menubar.context_menu_requested.connect(self._on_tray_context_menu)
         self.menubar.notification_clicked.connect(self.open_update_dialog)
         self.popover.toggle_assets_requested.connect(self._toggle_assets_hidden)
         self.popover.edit_requested.connect(self._on_edit_request)
@@ -170,6 +172,7 @@ class MacAppManager(QObject):
         # 로드한 자산 숨김 / 팝오버 투명도 상태를 팝오버에 한 번 주입
         self.popover.set_assets_hidden(self.assets_hidden)
         self.app_assets_action.setChecked(self.assets_hidden)
+        self.tray_assets_action.setChecked(self.assets_hidden)
         self.popover.set_opacity(self.popover_opacity)
         self.popover.set_preferred_height(self.popover_height)
         self.popover.set_market_filter(self.market_filter)
@@ -216,6 +219,41 @@ class MacAppManager(QObject):
         self.app_update_action = help_menu.addAction(
             "업데이트 확인", self.open_update_dialog
         )
+
+    # ── 트레이 아이콘 우클릭 컨텍스트 메뉴 ────────────────────────────────
+    def _build_tray_menu(self):
+        """상단 앱 메뉴바와 동일한 항목을 우클릭으로도 노출.
+
+        d72c1be 에서 팝오버 하단 액션 바를 상단 네이티브 앱 메뉴바로 옮긴 뒤,
+        상단 메뉴를 보지 못한 사용자가 "메뉴가 사라졌다" 고 느끼는 케이스가
+        있어 우클릭으로도 같은 액션을 노출한다.
+        """
+        menu = QMenu()
+        menu.addAction("종목 추가", self.open_add_dialog)
+        menu.addAction("종목 관리", self.open_manage_dialog)
+        menu.addSeparator()
+        menu.addAction("Excel 내보내기", self.open_export_dialog)
+        menu.addAction("Excel 가져오기", self.open_import_dialog)
+        menu.addSeparator()
+        self.tray_assets_action = menu.addAction(
+            "자산 정보 숨기기", self._toggle_assets_hidden
+        )
+        self.tray_assets_action.setCheckable(True)
+        menu.addSeparator()
+        self.tray_update_action = menu.addAction(
+            "업데이트 확인", self.open_update_dialog
+        )
+        menu.addSeparator()
+        menu.addAction("종료", self.app.quit)
+        self.tray_menu = menu
+
+    def _on_tray_context_menu(self, anchor_pos):
+        # 컨텍스트 메뉴를 띄울 때 팝오버는 같이 닫는다 — macOS 상태바
+        # 아이템의 native 동작(메뉴와 popover 는 동시에 떠 있지 않음).
+        if self.popover.isVisible():
+            self.popover.hide()
+            self._user_wants_popover_visible = False
+        self.tray_menu.popup(anchor_pos)
 
     # ── 앱 active/inactive 트랜지션 ───────────────────────────────────────
     # ApplicationActivate 이벤트와 applicationStateChanged 시그널 양쪽에
@@ -319,6 +357,7 @@ class MacAppManager(QObject):
         self.assets_hidden = not self.assets_hidden
         self.popover.set_assets_hidden(self.assets_hidden)
         self.app_assets_action.setChecked(self.assets_hidden)
+        self.tray_assets_action.setChecked(self.assets_hidden)
         self._save_config()
 
     def _on_opacity_changed(self, opacity: float):
@@ -753,14 +792,14 @@ class MacAppManager(QObject):
             self._show_update_toast(release)
 
     def _refresh_update_badge(self):
-        """메뉴바 '업데이트 확인' 항목에 새 버전 표시 토글."""
+        """앱 메뉴바 / 트레이 우클릭 메뉴 '업데이트 확인' 항목에 새 버전 표시 토글."""
         has_update = (
             self._cached_release is not None
             and updater.is_newer(__version__, self._cached_release.version)
         )
-        self.app_update_action.setText(
-            "업데이트 확인  (새 버전 있음)" if has_update else "업데이트 확인"
-        )
+        text = "업데이트 확인  (새 버전 있음)" if has_update else "업데이트 확인"
+        self.app_update_action.setText(text)
+        self.tray_update_action.setText(text)
 
     def _show_update_toast(self, release: updater.ReleaseInfo):
         """macOS 알림센터 토스트 — 클릭하면 menubar.notification_clicked → open_update_dialog."""

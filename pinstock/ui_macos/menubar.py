@@ -34,11 +34,14 @@ _ICON_TEMPLATE = _ICONS_DIR / "menubar_light.svg"
 class MenuBarIcon(QObject):
     """macOS 메뉴바 캔들스틱 아이콘 트리거.
 
-    좌/우 클릭 모두 popover 토글로 처리한다 (Mac 메뉴바 native 패턴).
-    종목 추가/관리 등 액션은 상단 네이티브 앱 메뉴바(manager 가 구성)에 있다.
+    좌클릭/더블클릭 → popover 토글. 우클릭 → 컨텍스트 메뉴 요청.
+    종목 추가/관리 등 액션은 상단 네이티브 앱 메뉴바와 우클릭 메뉴(manager 가 구성)
+    양쪽에 있다 — 상단 메뉴바에 메뉴가 있는 걸 모르는 사용자가 우클릭으로도
+    찾을 수 있게 한다.
     """
 
     toggle_popover_requested = pyqtSignal(QPoint, int)   # anchor_global_pos, anchor_width
+    context_menu_requested   = pyqtSignal(QPoint)        # anchor_global_pos (우클릭)
     notification_clicked     = pyqtSignal()              # 토스트 클릭 (업데이트 알림 등)
 
     def __init__(self, app: QApplication, parent: QObject | None = None):
@@ -98,10 +101,12 @@ class MenuBarIcon(QObject):
 
     # ── 클릭 핸들링 ───────────────────────────────────────────────────────
     def _on_activated(self, reason):
-        """좌/우 클릭 모두 popover 토글로 처리."""
-        if reason in (
+        """좌클릭/더블클릭 → 팝오버 토글, 우클릭 → 컨텍스트 메뉴."""
+        if reason == QSystemTrayIcon.ActivationReason.Context:
+            anchor_pos, _ = self._anchor_position()
+            self.context_menu_requested.emit(anchor_pos)
+        elif reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.Context,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
             anchor_pos, anchor_w = self._anchor_position()
