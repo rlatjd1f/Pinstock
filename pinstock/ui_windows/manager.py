@@ -609,7 +609,7 @@ class WidgetManager:
         self._save_config()
 
     def _master_toggle_text(self) -> str:
-        return "📊   마스터 위젯 숨기기" if self.master_visible else "📊   마스터 위젯 표시"
+        return "📊   마스터 위젯 숨기기" if self.master_visible else "📊   마스터 위젯 표시하기"
 
     def toggle_master_visibility(self):
         self.master_visible = not self.master_visible
