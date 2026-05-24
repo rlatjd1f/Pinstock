@@ -102,7 +102,6 @@ python -m pinstock
 | **우클릭** | 수정 / 삭제 메뉴 |
 | **시스템 트레이 좌클릭** | 모든 위젯 표시 / 숨김 빠른 토글 |
 | **시스템 트레이 우클릭** | 종목 추가 / 관리 / Excel 내보내기·가져오기 / 위치 초기화 / **🔄 업데이트 확인** / 종료 |
-| **🙈 / 👑 플로팅 토글 버튼** | 위젯·마스터 위젯 빠른 숨기기 |
 
 - 위젯 가로폭은 가장 긴 종목명 기준으로 모든 위젯에 통일 적용됩니다.
 - 현재가 옆에 등락률(▲/▼)이 함께 표시되며, 상승 시 빨강 · 하락 시 파랑으로 강조됩니다.
@@ -162,7 +161,6 @@ pinstock/
 ├── ui_windows/            Windows: 떠있는 위젯
 │   ├── floating_widget.py 개별 종목 위젯
 │   ├── master_widget.py   포트폴리오 요약 마스터 위젯
-│   ├── toggle_button.py   플로팅 빠른 토글 버튼
 │   ├── manage_dialog.py   종목 추가/관리 다이얼로그 (공통 사용)
 │   ├── chart_widget.py    sparkline 미니 차트 (공통 사용)
 │   ├── form_widgets.py    AutoSelect 입력 / ArrowSpinBox / ToggleSwitch

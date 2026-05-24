@@ -135,8 +135,6 @@ class MacAppManager(QObject):
         # 설정 로드 (Windows 와 동일 스키마)
         self.master_visible: bool = True
         self.master_pos: list | None = None
-        self.hide_all_btn_pos: list | None = None
-        self.hide_master_btn_pos: list | None = None
         self.assets_hidden: bool = False
         self.popover_opacity: float = 1.0
         self.popover_height: int | None = None
@@ -448,15 +446,6 @@ class MacAppManager(QObject):
                     self.master_pos = [int(pos[0]), int(pos[1])]
                 except (TypeError, ValueError):
                     self.master_pos = None
-            toggles = data.get("toggles") or {}
-            for key, attr in (("hide_all_pos", "hide_all_btn_pos"),
-                              ("hide_master_pos", "hide_master_btn_pos")):
-                p = toggles.get(key)
-                if isinstance(p, list) and len(p) == 2:
-                    try:
-                        setattr(self, attr, [int(p[0]), int(p[1])])
-                    except (TypeError, ValueError):
-                        pass
             self.assets_hidden = bool(data.get("assets_hidden", False))
             try:
                 opacity = float(data.get("popover_opacity", 1.0))
@@ -488,10 +477,6 @@ class MacAppManager(QObject):
             "master": {
                 "visible": self.master_visible,
                 "pos": self.master_pos,
-            },
-            "toggles": {
-                "hide_all_pos":    self.hide_all_btn_pos,
-                "hide_master_pos": self.hide_master_btn_pos,
             },
             "assets_hidden": self.assets_hidden,
             "popover_opacity": self.popover_opacity,

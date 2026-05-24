@@ -52,7 +52,6 @@ from ..core.storage import (
 from .theme import C, TRAY_MENU_STYLE
 from .floating_widget import StockWidget
 from .master_widget import MasterWidget
-from .toggle_button import ToggleButton
 from .manage_dialog import (
     StockDialog, ManageStocksDialog, ImportModeDialog, fetch_quote_for_stock,
 )
@@ -71,11 +70,6 @@ class WidgetManager:
         self.master_widget: MasterWidget | None = None
         self.master_visible: bool = True
         self.master_pos: list | None = None   # None → 기본 위치
-        # 토글 버튼 (몰컴 모드용 빠른 숨기기/표시)
-        self.hide_all_btn: ToggleButton | None = None
-        self.hide_master_btn: ToggleButton | None = None
-        self.hide_all_btn_pos: list | None = None
-        self.hide_master_btn_pos: list | None = None
         # macOS 팝오버에서 쓰는 자산 정보 숨김 / 팝오버 투명도 — Windows 에서는
         # UI 노출은 없고 round-trip 보존만 한다 (한쪽에서 저장하면 다른쪽에서도 유지되도록).
         self.assets_hidden: bool = False
@@ -125,12 +119,6 @@ class WidgetManager:
                 self.master_widget.hide()
             elif self.master_visible:
                 self.master_widget.show()
-        # 토글 버튼도 함께 표시/숨김 (다시 켜기는 트레이로만 가능)
-        if self.hide_all_btn:
-            self.hide_all_btn.hide() if self.is_hidden else self.hide_all_btn.show()
-        if self.hide_master_btn:
-            show_master_btn = self.master_visible and not self.is_hidden
-            self.hide_master_btn.show() if show_master_btn else self.hide_master_btn.hide()
         self.toggle_act.setText("👀   표시하기" if self.is_hidden else "🙈   숨기기")
 
     # ── 위치 초기화 ───────────────────────────────────────────────────────
@@ -190,44 +178,6 @@ class WidgetManager:
                 w.move(x, y)
                 s["pos"] = [x, y]
 
-        # 토글 버튼 위치:
-        # 1) 마스터 표시 중 → 마스터 왼쪽에 위/아래
-        # 2) 마스터 없거나 숨김 + 표시 종목 있음 → 마지막 표시 종목 위젯 왼쪽에 위/아래
-        # 3) 둘 다 없음 → 화면 우상단 fallback
-        btn_size = ToggleButton.SIZE
-        if self.master_widget and self.master_widget.isVisible():
-            btn_x = mx - btn_size - GAP
-            top_y = my
-            bot_y = my + btn_size + GAP
-        elif groups:
-            # 마지막 표시 종목 위젯 위치 (방금 위에서 pos에 저장됨)
-            last_item = list(groups.values())[-1][-1][0]
-            last_pos = last_item.get("pos") or [0, 0]
-            btn_x = last_pos[0] - btn_size - GAP
-            top_y = last_pos[1]
-            bot_y = top_y + btn_size + GAP
-        else:
-            primary = QApplication.primaryScreen()
-            pgeo = primary.availableGeometry()
-            btn_x = pgeo.x() + pgeo.width() - btn_size - MARGIN_X
-            top_y = pgeo.y() + MARGIN_Y
-            bot_y = top_y + btn_size + GAP
-
-        if self.hide_all_btn:
-            self.hide_all_btn.move(btn_x, top_y)
-            self.hide_all_btn_pos = [btn_x, top_y]
-            # 전체 토글은 항상 보임 (전체 숨김 상태가 아닌 한)
-            if not self.is_hidden:
-                self.hide_all_btn.show()
-        if self.hide_master_btn:
-            self.hide_master_btn.move(btn_x, bot_y)
-            self.hide_master_btn_pos = [btn_x, bot_y]
-            # 마스터 토글은 마스터 표시 상태에 따름
-            if self.master_visible and not self.is_hidden:
-                self.hide_master_btn.show()
-            else:
-                self.hide_master_btn.hide()
-
         self._save_config()
         # 숨김 상태라면 자동으로 다시 표시
         if self.is_hidden:
@@ -258,7 +208,6 @@ class WidgetManager:
 
         # 마스터 위젯을 대상 화면 우상단 첫자리에 (표시 중일 때만)
         master_offset = 0
-        mx = my = None
         if master_active:
             mx = geo.x() + geo.width() - self.master_widget.width() - MARGIN_X
             my = geo.y() + MARGIN_Y
@@ -285,39 +234,6 @@ class WidgetManager:
             y = col_top_y + row_idx * step_y
             w.move(x, y)
             s["pos"] = [x, y]
-
-        # 토글 버튼: 마스터 옆 > 마지막 표시 종목 옆 > 대상 화면 우상단 fallback
-        btn_size = ToggleButton.SIZE
-        last_visible = next(
-            (s for s in reversed(self.stocks) if not s.get("hidden", False)),
-            None,
-        )
-        if master_active:
-            btn_x = mx - btn_size - GAP
-            top_y = my
-            bot_y = my + btn_size + GAP
-        elif last_visible:
-            last_pos = last_visible.get("pos") or [0, 0]
-            btn_x = last_pos[0] - btn_size - GAP
-            top_y = last_pos[1]
-            bot_y = top_y + btn_size + GAP
-        else:
-            btn_x = geo.x() + geo.width() - btn_size - MARGIN_X
-            top_y = geo.y() + MARGIN_Y
-            bot_y = top_y + btn_size + GAP
-
-        if self.hide_all_btn:
-            self.hide_all_btn.move(btn_x, top_y)
-            self.hide_all_btn_pos = [btn_x, top_y]
-            if not self.is_hidden:
-                self.hide_all_btn.show()
-        if self.hide_master_btn:
-            self.hide_master_btn.move(btn_x, bot_y)
-            self.hide_master_btn_pos = [btn_x, bot_y]
-            if self.master_visible and not self.is_hidden:
-                self.hide_master_btn.show()
-            else:
-                self.hide_master_btn.hide()
 
         self._save_config()
         # 숨김 상태라면 자동으로 다시 표시
@@ -481,16 +397,6 @@ class WidgetManager:
                     self.master_pos = [int(pos[0]), int(pos[1])]
                 except (TypeError, ValueError):
                     self.master_pos = None
-            # 토글 버튼 위치
-            toggles = data.get("toggles") or {}
-            for key, attr in (("hide_all_pos", "hide_all_btn_pos"),
-                              ("hide_master_pos", "hide_master_btn_pos")):
-                pos = toggles.get(key)
-                if isinstance(pos, list) and len(pos) == 2:
-                    try:
-                        setattr(self, attr, [int(pos[0]), int(pos[1])])
-                    except (TypeError, ValueError):
-                        pass
             self.assets_hidden = bool(data.get("assets_hidden", False))
             try:
                 opacity = float(data.get("popover_opacity", 1.0))
@@ -515,10 +421,6 @@ class WidgetManager:
                 "visible": self.master_visible,
                 "pos": self.master_pos,
             },
-            "toggles": {
-                "hide_all_pos":    self.hide_all_btn_pos,
-                "hide_master_pos": self.hide_master_btn_pos,
-            },
             "assets_hidden": self.assets_hidden,
             "popover_opacity": self.popover_opacity,
         }
@@ -541,12 +443,6 @@ class WidgetManager:
         if self.master_widget:
             mpos = self.master_widget.pos()
             self.master_pos = [mpos.x(), mpos.y()]
-        if self.hide_all_btn:
-            p = self.hide_all_btn.pos()
-            self.hide_all_btn_pos = [p.x(), p.y()]
-        if self.hide_master_btn:
-            p = self.hide_master_btn.pos()
-            self.hide_master_btn_pos = [p.x(), p.y()]
         self._save_config()
 
     # ── 위젯 생성 ──────────────────────────────────────────────────────────
@@ -561,7 +457,6 @@ class WidgetManager:
                 visible_idx += 1
         self._sync_fx_timer()
         self._spawn_master()
-        self._spawn_toggle_buttons()
 
     def _compact_visible_widgets(self):
         if not self.widgets:
@@ -607,40 +502,6 @@ class WidgetManager:
             y = base_y + visible_idx * step_y
             w.move(x, y)
             s["pos"] = [x, y]
-
-    def _spawn_toggle_buttons(self):
-        """몰컴 모드용 빠른 숨기기 토글 버튼 두 개를 화면에 띄움."""
-        # 전체 위젯 숨기기/표시
-        self.hide_all_btn = ToggleButton("🙈", "위젯 전체 숨기기/표시")
-        self.hide_all_btn.clicked.connect(self.toggle_visibility)
-
-        # 마스터 위젯 숨기기/표시
-        self.hide_master_btn = ToggleButton("👑", "마스터 위젯 숨기기/표시")
-        self.hide_master_btn.clicked.connect(self.toggle_master_visibility)
-
-        # 위치: 저장된 위치 우선, 없으면 화면 우상단 (마스터 위젯과 안 겹치게 좌측으로)
-        primary = QApplication.primaryScreen()
-        geo = primary.availableGeometry()
-        margin = 12
-        btn_size = ToggleButton.SIZE
-        # 기본 위치: 우상단 모서리에 가로로 나란히 (전체 토글이 더 우측)
-        default_all_x    = geo.x() + geo.width() - btn_size - margin
-        default_all_y    = geo.y() + margin
-        default_master_x = default_all_x - btn_size - margin
-        default_master_y = default_all_y
-
-        pa = self.hide_all_btn_pos or [default_all_x, default_all_y]
-        pm = self.hide_master_btn_pos or [default_master_x, default_master_y]
-        self.hide_all_btn.move(pa[0], pa[1])
-        self.hide_master_btn.move(pm[0], pm[1])
-        self.hide_all_btn.setWindowOpacity(self.popover_opacity)
-        self.hide_master_btn.setWindowOpacity(self.popover_opacity)
-        # 전체 토글은 항상 보임 (전체 숨김 상태일 때만 같이 숨겨짐)
-        if not self.is_hidden:
-            self.hide_all_btn.show()
-        # 마스터 토글은 마스터 위젯이 표시 중일 때만 보임
-        if self.master_visible and not self.is_hidden:
-            self.hide_master_btn.show()
 
     def _spawn_widget(self, stock: dict, def_x=60, def_y=60, stagger_idx: int = 0):
         code = stock["code"]
@@ -707,21 +568,16 @@ class WidgetManager:
         return opacity <= self.CLICK_THROUGH_OPACITY
 
     def _apply_opacity_to_all(self, opacity: float):
-        """마스터 + 모든 종목 위젯 + 토글 버튼에 동일 투명도 적용."""
+        """마스터 + 모든 종목 위젯에 동일 투명도 적용."""
         if self.master_widget:
             self.master_widget.setWindowOpacity(opacity)
         for w in self.widgets.values():
             w.setWindowOpacity(opacity)
-        if self.hide_all_btn:
-            self.hide_all_btn.setWindowOpacity(opacity)
-        if self.hide_master_btn:
-            self.hide_master_btn.setWindowOpacity(opacity)
 
     def _apply_click_through(self, opacity: float):
         """종목 위젯 + 마스터 카드에 OS-레벨 click-through 토글.
         슬라이더는 별도 top-level 윈도우라 마스터가 통과 상태여도 그대로 조작 가능,
-        자물쇠 오버레이는 항상 WindowTransparentForInput 라 변동 없음.
-        토글 버튼은 항상 클릭 가능."""
+        자물쇠 오버레이는 항상 WindowTransparentForInput 라 변동 없음."""
         enabled = self._is_click_through_opacity(opacity)
         flag = Qt.WindowType.WindowTransparentForInput
 
@@ -760,9 +616,6 @@ class WidgetManager:
         show_master = self.master_visible and not self.is_hidden
         if self.master_widget:
             self.master_widget.show() if show_master else self.master_widget.hide()
-        # 마스터 토글 버튼도 마스터 위젯 표시 상태에 따름
-        if self.hide_master_btn:
-            self.hide_master_btn.show() if show_master else self.hide_master_btn.hide()
         self.master_toggle_act.setText(self._master_toggle_text())
         self._save_config()
 
