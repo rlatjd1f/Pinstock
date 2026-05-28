@@ -32,6 +32,8 @@ from ..ui_windows.manage_dialog import (
     StockDialog, ManageStocksDialog, ImportModeDialog, fetch_quote_for_stock,
 )
 from ..ui_common.update_dialog import UpdateDialog
+from ..ui_common.help_dialog import HelpDialog
+from ..ui_common.about_dialog import AboutDialog
 
 from .popover import Popover
 from .menubar import MenuBarIcon
@@ -214,8 +216,11 @@ class MacAppManager(QObject):
         self.app_assets_action.setCheckable(True)
 
         help_menu = self.app_menubar.addMenu("도움말")
-        self.app_update_action = help_menu.addAction(
-            "업데이트 확인", self.open_update_dialog
+        help_menu.addAction("도움말", self.open_help_dialog)
+        # 업데이트 확인 진입점은 About 다이얼로그 내부 버튼으로 옮겼다.
+        # 새 버전이 잡히면 이 라벨에 ● 배지를 붙여 안내한다.
+        self.app_about_action = help_menu.addAction(
+            "Pinstock 정보", self.open_about_dialog
         )
 
     # ── 트레이 아이콘 우클릭 컨텍스트 메뉴 ────────────────────────────────
@@ -238,8 +243,9 @@ class MacAppManager(QObject):
         )
         self.tray_assets_action.setCheckable(True)
         menu.addSeparator()
-        self.tray_update_action = menu.addAction(
-            "업데이트 확인", self.open_update_dialog
+        menu.addAction("도움말", self.open_help_dialog)
+        self.tray_about_action = menu.addAction(
+            "Pinstock 정보", self.open_about_dialog
         )
         menu.addSeparator()
         menu.addAction("종료", self.app.quit)
@@ -734,6 +740,21 @@ class MacAppManager(QObject):
         for i, s in enumerate(self.stocks):
             self._spawn_fetcher(s, stagger_idx=i)
 
+    # ── 도움말 / 앱 정보 ──────────────────────────────────────────────────
+    def open_help_dialog(self):
+        HelpDialog().exec()
+
+    def open_about_dialog(self):
+        # 업데이트 확인은 About 다이얼로그 내부 버튼에서 트리거 — manager 의
+        # 캐시/throttle 흐름을 그대로 재사용하도록 콜백을 그쪽으로 전달한다.
+        # 개발 빌드(0.0.0+dev)에서도 콜백을 넘긴다 — UpdateDialog 가 내부에서
+        # can_self_update() 를 검사해 다운로드 버튼 대신 '릴리즈 페이지 열기'
+        # 로 폴백하므로, 사용자는 새 버전 확인 자체는 가능하다.
+        AboutDialog(
+            on_check_update=self.open_update_dialog,
+            has_update=self._has_pending_update(),
+        ).exec()
+
     # ── 업데이트 확인 ─────────────────────────────────────────────────────
     # Windows WidgetManager 와 1:1 대응되는 패턴 — 다이얼로그가 manager 캐시를
     # 갱신하도록 콜백을 넘겨주고, throttle/뱃지/토스트는 manager 가 책임진다.
@@ -777,14 +798,21 @@ class MacAppManager(QObject):
             self._show_update_toast(release)
 
     def _refresh_update_badge(self):
-        """앱 메뉴바 / 트레이 우클릭 메뉴 '업데이트 확인' 항목에 새 버전 표시 토글."""
-        has_update = (
+        """앱 메뉴바 / 트레이 우클릭 메뉴 'Pinstock 정보' 항목에 새 버전 표시 토글.
+        업데이트 확인 진입점은 About 다이얼로그 내부 버튼이므로, 배지도 그 진입점인
+        '앱 정보' 항목에 표시한다."""
+        text = (
+            "Pinstock 정보  ● 새 버전 있음"
+            if self._has_pending_update() else "Pinstock 정보"
+        )
+        self.app_about_action.setText(text)
+        self.tray_about_action.setText(text)
+
+    def _has_pending_update(self) -> bool:
+        return (
             self._cached_release is not None
             and updater.is_newer(__version__, self._cached_release.version)
         )
-        text = "업데이트 확인  (새 버전 있음)" if has_update else "업데이트 확인"
-        self.app_update_action.setText(text)
-        self.tray_update_action.setText(text)
 
     def _show_update_toast(self, release: updater.ReleaseInfo):
         """macOS 알림센터 토스트 — 클릭하면 menubar.notification_clicked → open_update_dialog."""

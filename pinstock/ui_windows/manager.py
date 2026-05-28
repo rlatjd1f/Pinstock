@@ -56,6 +56,8 @@ from .manage_dialog import (
     StockDialog, ManageStocksDialog, ImportModeDialog, fetch_quote_for_stock,
 )
 from ..ui_common.update_dialog import UpdateDialog
+from ..ui_common.help_dialog import HelpDialog
+from ..ui_common.about_dialog import AboutDialog
 
 
 # ─── 전체 위젯 관리자 ─────────────────────────────────────────────────────────
@@ -312,7 +314,8 @@ class WidgetManager:
         self.master_toggle_act = QAction(self._master_toggle_text(), menu)
         reset_act  = QAction("📐   위치 초기화", menu)
         gather_act = QAction("🎯   마스터 화면에 정렬", menu)
-        self.update_act = QAction("🔄   업데이트 확인", menu)
+        help_act   = QAction("❓   도움말",      menu)
+        self.about_act = QAction("ℹ️   앱 정보",  menu)
         quit_act   = QAction("❌   종료",        menu)
         add_act.triggered.connect(self.open_add_dialog)
         manage_act.triggered.connect(self.open_manage_dialog)
@@ -322,7 +325,8 @@ class WidgetManager:
         self.master_toggle_act.triggered.connect(self.toggle_master_visibility)
         reset_act.triggered.connect(self.reset_positions)
         gather_act.triggered.connect(self.gather_to_master_screen)
-        self.update_act.triggered.connect(self.open_update_dialog)
+        help_act.triggered.connect(self.open_help_dialog)
+        self.about_act.triggered.connect(self.open_about_dialog)
         quit_act.triggered.connect(self.app.quit)
 
         menu.addAction(add_act)
@@ -336,7 +340,8 @@ class WidgetManager:
         menu.addAction(reset_act)
         menu.addAction(gather_act)
         menu.addSeparator()
-        menu.addAction(self.update_act)
+        menu.addAction(help_act)
+        menu.addAction(self.about_act)
         menu.addAction(quit_act)
 
         self.context_menu = menu   # 마스터 위젯 우클릭에서도 같은 메뉴 재사용
@@ -712,6 +717,21 @@ class WidgetManager:
         if self.is_hidden:
             self.toggle_visibility()
 
+    # ── 도움말 / 앱 정보 ──────────────────────────────────────────────────
+    def open_help_dialog(self):
+        HelpDialog().exec()
+
+    def open_about_dialog(self):
+        # 업데이트 확인은 About 다이얼로그 내부 버튼에서 트리거 — manager 의
+        # 캐시/throttle 흐름을 그대로 재사용하도록 콜백을 그쪽으로 전달한다.
+        # 개발 빌드(0.0.0+dev)에서도 콜백을 넘긴다 — UpdateDialog 가 내부에서
+        # can_self_update() 를 검사해 다운로드 버튼 대신 '릴리즈 페이지 열기'
+        # 로 폴백하므로, 사용자는 새 버전 확인 자체는 가능하다.
+        AboutDialog(
+            on_check_update=self.open_update_dialog,
+            has_update=self._has_pending_update(),
+        ).exec()
+
     # ── 업데이트 확인 ─────────────────────────────────────────────────────
     def open_update_dialog(self):
         # 수동 체크 — 다이얼로그가 fetch 한 결과를 manager 캐시에도 반영해서
@@ -755,15 +775,19 @@ class WidgetManager:
             self._show_update_toast(release)
 
     def _refresh_update_badge(self):
-        """트레이 메뉴의 '업데이트 확인' 액션 텍스트에 새 버전 표시 점 토글."""
-        if not hasattr(self, "update_act"):
+        """트레이 메뉴의 '앱 정보' 액션 텍스트에 새 버전 표시 점 토글.
+        업데이트 확인 진입점은 About 다이얼로그 내부 버튼이므로, 배지도 그 진입점인
+        '앱 정보' 항목에 표시한다."""
+        if not hasattr(self, "about_act"):
             return
-        has_update = (
+        suffix = "  ●" if self._has_pending_update() else ""
+        self.about_act.setText("ℹ️   앱 정보" + suffix)
+
+    def _has_pending_update(self) -> bool:
+        return (
             self._cached_release is not None
             and updater.is_newer(__version__, self._cached_release.version)
         )
-        suffix = "  ●" if has_update else ""
-        self.update_act.setText("🔄   업데이트 확인" + suffix)
 
     def _show_update_toast(self, release: updater.ReleaseInfo):
         """Windows 트레이 토스트 — 클릭하면 messageClicked → open_update_dialog."""
