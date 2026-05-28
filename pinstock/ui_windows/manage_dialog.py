@@ -19,8 +19,9 @@ from .form_widgets import (
 )
 
 
-class _KoreanStockCompleter(QCompleter):
-    """라인 에디트에 써넣을 값을 표시 라벨이 아닌 종목 코드로 고정한다."""
+class _StockSearchCompleter(QCompleter):
+    """라인 에디트에 써넣을 값을 표시 라벨이 아닌 종목 코드/티커로 고정한다.
+    KR·US 두 시장에서 공통으로 사용."""
 
     def pathFromIndex(self, index: QModelIndex) -> str:
         data = index.data(Qt.ItemDataRole.UserRole)
@@ -155,18 +156,19 @@ class StockDialog(QDialog):
         self.code_edit.textEdited.connect(self._on_code_text_edited)
         layout.addRow(self._row_label("종목 코드"), self.code_edit)
 
-        # 한국 종목 이름 검색용 드롭다운 자동완성 (시장이 KR 일 때만 부착)
-        self._kr_completer_model = QStandardItemModel(self)
-        self._kr_completer = _KoreanStockCompleter(self._kr_completer_model, self)
-        self._kr_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-        self._kr_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._kr_completer.activated[QModelIndex].connect(self._on_kr_completer_activated)
+        # 종목 이름/티커 검색용 드롭다운 자동완성 (KR·US 공용, 항상 부착)
+        self._search_model = QStandardItemModel(self)
+        self._search_completer = _StockSearchCompleter(self._search_model, self)
+        self._search_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        self._search_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._search_completer.activated[QModelIndex].connect(self._on_search_activated)
+        self.code_edit.setCompleter(self._search_completer)
         # 디바운스: 타이핑이 250ms 멈춘 뒤 한 번만 검색
-        self._kr_search_timer = QTimer(self)
-        self._kr_search_timer.setSingleShot(True)
-        self._kr_search_timer.setInterval(250)
-        self._kr_search_timer.timeout.connect(self._run_kr_search)
-        self._kr_last_query: str = ""
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._run_search)
+        self._last_search_query: str = ""
 
         # 종목명 미리보기 (코드 입력 후 자동 조회, 이슈 #2)
         self.preview_lbl = QLabel("─")
@@ -252,17 +254,20 @@ class StockDialog(QDialog):
         market = self.market()
         self._set_preview_hint("조회 중...")
         self.preview_lbl.repaint()
+        # 1) 입력을 그대로 코드/티커로 보고 시세 API 호출.
+        # 2) 실패하면 이름 검색으로 폴백해 첫 매칭의 코드/티커로 자동 채움.
+        #    (사용자가 드롭다운에서 안 고르고 그냥 엔터/포커스 아웃 한 경우 안전망)
         if market == MARKET_US:
             result = fetch_us_stock(code)
             if not result:
-                matches = search_us_stocks(code, limit=1)
+                matches = search_us_stocks(raw, limit=1)
                 if matches:
-                    if matches[0].get("symbol"):
-                        self.code_edit.setText(matches[0]["symbol"])
+                    ticker = matches[0].get("symbol") or matches[0].get("code")
+                    if ticker:
+                        self.code_edit.setText(ticker)
                     result = {"name": matches[0]["name"]}
                     self._preview_result = matches[0]
         else:
-            # 6자리 코드 (숫자/영문) 면 바로 조회, 아니면 이름으로 검색
             if len(code) == 6 and code.isalnum():
                 result = fetch_stock(code)
             else:
@@ -280,40 +285,48 @@ class StockDialog(QDialog):
         else:
             self._set_preview_error("찾을 수 없는 종목")
 
-    # ── 한국 종목 이름 자동완성 ──────────────────────────────────────────
+    # ── 종목 이름/티커 자동완성 (KR·US 공용) ─────────────────────────────
     def _on_code_text_edited(self, text: str):
-        """타이핑할 때마다 호출. KR 시장에서 이름처럼 보이면 디바운스 후 검색."""
-        if self.market() != MARKET_KR:
-            return
+        """타이핑할 때마다 호출. 디바운스 후 현재 시장에 맞는 API 로 검색."""
         query = text.strip()
         if not query:
-            self._kr_search_timer.stop()
-            self._kr_completer_model.clear()
+            self._search_timer.stop()
+            self._search_model.clear()
             return
-        # 6자리 코드 직접 입력 케이스는 드롭다운 띄우지 않음
-        if len(query) == 6 and query.isalnum():
-            self._kr_search_timer.stop()
-            self._kr_completer_model.clear()
+        # 코드를 직접 입력한 경우 (KR 6자리 alphanumeric) 는 드롭다운 띄우지 않음
+        if self.market() == MARKET_KR and len(query) == 6 and query.isalnum():
+            self._search_timer.stop()
+            self._search_model.clear()
             return
-        self._kr_search_timer.start()
+        self._search_timer.start()
 
-    def _run_kr_search(self):
+    def _run_search(self):
         query = self.code_edit.text().strip()
-        if not query or self.market() != MARKET_KR:
+        if not query:
             return
-        if query == self._kr_last_query:
+        if query == self._last_search_query:
             return
-        self._kr_last_query = query
-        matches = search_korean_stocks(query, limit=10)
-        self._kr_completer_model.clear()
+        self._last_search_query = query
+        market = self.market()
+        if market == MARKET_US:
+            matches = search_us_stocks(query, limit=10)
+        else:
+            matches = search_korean_stocks(query, limit=10)
+        self._search_model.clear()
         for m in matches:
-            item = QStandardItem(f"{m['name']}  ({m['code']})")
-            item.setData(m, Qt.ItemDataRole.UserRole)
-            self._kr_completer_model.appendRow(item)
-        if matches and self.code_edit.hasFocus():
-            self._kr_completer.complete()
+            code = m.get("code") or m.get("symbol")
+            if not code:
+                continue
+            item = QStandardItem(f"{m.get('name', code)}  ({code})")
+            # UserRole 에 코드 키를 정규화해서 저장 (US 응답은 'symbol' 만 있을 수 있음)
+            data = dict(m)
+            data["code"] = code
+            item.setData(data, Qt.ItemDataRole.UserRole)
+            self._search_model.appendRow(item)
+        if self._search_model.rowCount() and self.code_edit.hasFocus():
+            self._search_completer.complete()
 
-    def _on_kr_completer_activated(self, index: QModelIndex):
+    def _on_search_activated(self, index: QModelIndex):
         data = index.data(Qt.ItemDataRole.UserRole)
         if not data:
             return
@@ -330,10 +343,12 @@ class StockDialog(QDialog):
         self._preview_result = None
         if not self.is_edit:
             self._set_preview_neutral()
+        # 시장이 바뀌면 이전 시장의 후보 목록·캐시된 쿼리를 비운다
+        self._search_timer.stop()
+        self._search_model.clear()
+        self._last_search_query = ""
         if market == MARKET_US:
-            self.code_edit.setCompleter(None)
-            self._kr_search_timer.stop()
-            self.code_edit.setPlaceholderText("예: AAPL  (Apple)")
+            self.code_edit.setPlaceholderText("예: Apple / AAPL")
             self.avg_label.setText("달러 매입단가")
             self.avg_spin.setDecimals(4)
             self.avg_spin.setSingleStep(1)
@@ -343,7 +358,6 @@ class StockDialog(QDialog):
             self.krw_avg_spin.setVisible(True)
             self.krw_avg_label.setVisible(True)
         else:
-            self.code_edit.setCompleter(self._kr_completer)
             self.code_edit.setPlaceholderText("예: 삼성전자 / 005930")
             self.avg_label.setText("평단가")
             self.avg_spin.setDecimals(0)
