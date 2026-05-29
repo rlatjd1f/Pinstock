@@ -195,6 +195,10 @@ class MacAppManager(QObject):
         # 시작 10초 뒤 — 자동 업데이트 체크 (throttle/can_self_update 검사 후 실제 호출)
         QTimer.singleShot(_AUTO_CHECK_STARTUP_DELAY_MS, self._maybe_run_auto_update_check)
 
+        # 시작 시 위젯(팝오버) 즉시 표시
+        self._user_wants_popover_visible = True
+        QTimer.singleShot(500, self._maybe_re_show_popover)
+
     # ── 상단 네이티브 앱 메뉴바 ───────────────────────────────────────────
     def _build_app_menu(self):
         """화면 상단 앱 이름('Pinstock') 옆에 뜨는 네이티브 메뉴바.
