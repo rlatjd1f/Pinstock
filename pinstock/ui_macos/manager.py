@@ -296,6 +296,11 @@ class MacAppManager(QObject):
             return   # 이미 떠있거나 방금 한 번 재표시했음 (중복 호출 방지)
         anchor_pos, anchor_w = self.menubar._anchor_position()
         self.popover.show_below(anchor_pos, anchor_w)
+        
+        # 시작 시 또는 복귀 시 최상단으로 한 번 더 끌어올림
+        self.popover.raise_()
+        self.popover.activateWindow()
+
         # 같은 트레이 클릭이 늦게 activated 를 fire 시키면 토글-닫기로
         # 동작해버리니, 짧은 시간 동안 토글을 가드한다.
         self._popover_just_re_shown = True
