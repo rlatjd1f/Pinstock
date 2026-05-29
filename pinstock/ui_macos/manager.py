@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QObject, QTimer, QEvent, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog, QMenu, QMenuBar
+from PyQt6.QtWidgets import QApplication, QMessageBox, QFileDialog, QMenu
 
 from ..__version__ import __version__
 from ..core import updater
@@ -155,7 +155,6 @@ class MacAppManager(QObject):
         # UI
         self.popover = Popover()
         self.menubar = MenuBarIcon(app, parent=self)
-        self._build_app_menu()
         self._build_tray_menu()
 
         # 시그널 연결
@@ -174,7 +173,6 @@ class MacAppManager(QObject):
 
         # 로드한 자산 숨김 / 팝오버 투명도 상태를 팝오버에 한 번 주입
         self.popover.set_assets_hidden(self.assets_hidden)
-        self.app_assets_action.setChecked(self.assets_hidden)
         self.tray_assets_action.setChecked(self.assets_hidden)
         self.popover.set_opacity(self.popover_opacity)
         self.popover.set_preferred_height(self.popover_height)
@@ -201,45 +199,11 @@ class MacAppManager(QObject):
         # 추정 위치로 폴백돼 어긋남).
         QTimer.singleShot(300, self._show_popover_initial)
 
-    # ── 상단 네이티브 앱 메뉴바 ───────────────────────────────────────────
-    def _build_app_menu(self):
-        """화면 상단 앱 이름('Pinstock') 옆에 뜨는 네이티브 메뉴바.
-
-        부모 없는 QMenuBar 는 macOS 에서 앱 전역 메뉴바가 된다. 앱이 활성
-        (frontmost) 상태일 때만 보이며, 트레이 아이콘 클릭 시 앱이 활성화되므로
-        팝오버를 띄운 직후 사용 가능하다.
-        """
-        self.app_menubar = QMenuBar()
-
-        stock_menu = self.app_menubar.addMenu("종목")
-        stock_menu.addAction("종목 추가", self.open_add_dialog)
-        stock_menu.addAction("종목 관리", self.open_manage_dialog)
-
-        file_menu = self.app_menubar.addMenu("파일")
-        file_menu.addAction("Excel 내보내기", self.open_export_dialog)
-        file_menu.addAction("Excel 가져오기", self.open_import_dialog)
-
-        view_menu = self.app_menubar.addMenu("보기")
-        self.app_assets_action = view_menu.addAction(
-            "자산 정보 숨기기", self._toggle_assets_hidden
-        )
-        self.app_assets_action.setCheckable(True)
-
-        help_menu = self.app_menubar.addMenu("도움말")
-        help_menu.addAction("도움말", self.open_help_dialog)
-        # 업데이트 확인 진입점은 About 다이얼로그 내부 버튼으로 옮겼다.
-        # 새 버전이 잡히면 이 라벨에 ● 배지를 붙여 안내한다.
-        self.app_about_action = help_menu.addAction(
-            "Pinstock 정보", self.open_about_dialog
-        )
-
     # ── 트레이 아이콘 우클릭 컨텍스트 메뉴 ────────────────────────────────
     def _build_tray_menu(self):
-        """상단 앱 메뉴바와 동일한 항목을 우클릭으로도 노출.
-
-        d72c1be 에서 팝오버 하단 액션 바를 상단 네이티브 앱 메뉴바로 옮긴 뒤,
-        상단 메뉴를 보지 못한 사용자가 "메뉴가 사라졌다" 고 느끼는 케이스가
-        있어 우클릭으로도 같은 액션을 노출한다.
+        """메뉴바 아이콘 우클릭 컨텍스트 메뉴 — 종목 추가/관리, Excel,
+        자산 숨김, 도움말, 종료. 메뉴바 전용 앱(LSUIElement)이라 상단
+        네이티브 메뉴바가 없으므로, 모든 메뉴 액션의 단일 진입점이다.
         """
         menu = QMenu()
         menu.addAction("종목 추가", self.open_add_dialog)
@@ -362,11 +326,10 @@ class MacAppManager(QObject):
         self.popover.update_stock_daily(code, candles)
 
     def _toggle_assets_hidden(self):
-        """자산 숨김 토글 — 메뉴바 메뉴 / 팝오버 상단 카드 클릭 양쪽에서 호출.
+        """자산 숨김 토글 — 우클릭 메뉴 / 팝오버 상단 카드 클릭 양쪽에서 호출.
         팝오버와 메뉴 체크 상태를 함께 동기화하고 설정에 저장한다."""
         self.assets_hidden = not self.assets_hidden
         self.popover.set_assets_hidden(self.assets_hidden)
-        self.app_assets_action.setChecked(self.assets_hidden)
         self.tray_assets_action.setChecked(self.assets_hidden)
         self._save_config()
 
@@ -823,14 +786,13 @@ class MacAppManager(QObject):
             self._show_update_toast(release)
 
     def _refresh_update_badge(self):
-        """앱 메뉴바 / 트레이 우클릭 메뉴 'Pinstock 정보' 항목에 새 버전 표시 토글.
+        """트레이 우클릭 메뉴 'Pinstock 정보' 항목에 새 버전 표시 토글.
         업데이트 확인 진입점은 About 다이얼로그 내부 버튼이므로, 배지도 그 진입점인
         '앱 정보' 항목에 표시한다."""
         text = (
             "Pinstock 정보  ● 새 버전 있음"
             if self._has_pending_update() else "Pinstock 정보"
         )
-        self.app_about_action.setText(text)
         self.tray_about_action.setText(text)
 
     def _has_pending_update(self) -> bool:
