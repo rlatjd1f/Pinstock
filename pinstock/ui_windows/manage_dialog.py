@@ -13,7 +13,7 @@ from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
 from ..core.api import fetch_stock, fetch_us_stock, search_us_stocks, search_korean_stocks
 from ..core.portfolio import is_us_stock, stock_metrics
 from ..core.storage import MARKET_KR, MARKET_US, CURRENCY_KRW, CURRENCY_USD
-from .theme import C, DIALOG_STYLE
+from .theme import C, DIALOG_STYLE, SEARCH_POPUP_STYLE
 from .form_widgets import (
     AutoSelectDoubleSpinBox, SearchLineEdit, QuantitySpinBox, ToggleSwitch,
 )
@@ -164,6 +164,8 @@ class StockDialog(QDialog):
         self._search_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._search_completer.activated[QModelIndex].connect(self._on_search_activated)
         self.code_edit.setCompleter(self._search_completer)
+        # 드롭다운 팝업을 앱 다크 테마와 통일
+        self._search_completer.popup().setStyleSheet(SEARCH_POPUP_STYLE)
         # 디바운스: 타이핑이 0.5초 멈춘 뒤 한 번만 검색
         # (한글 IME 조합 중인 마지막 글자는 SearchLineEdit.composedText()로 포함)
         self._search_timer = QTimer(self)
@@ -346,16 +348,18 @@ class StockDialog(QDialog):
         n = self._search_model.rowCount()
         if popup is None or n == 0:
             return
-        # 가장 긴 항목을 잘림 없이 담을 폭. 글꼴 기준 실측(fm)과 delegate 여백을
-        # 반영한 sizeHintForColumn 중 큰 값을 써서 프록시 갱신 타이밍과 무관하게 안전.
+        # 항목 1개를 잘림 없이 담을 폭. 글꼴 실측(fm, 항목 좌우 padding 10px*2 포함)과
+        # delegate 여백을 반영한 sizeHintForColumn 중 큰 값을 써서 프록시 갱신
+        # 타이밍과 무관하게 안전.
         fm = popup.fontMetrics()
         text_w = max(fm.horizontalAdvance(self._search_model.item(r).text())
                      for r in range(n))
-        width = max(text_w + 26, popup.sizeHintForColumn(0))
+        item_w = max(text_w + 24, popup.sizeHintForColumn(0))
+        # 뷰 자체 padding(4px*2) + 프레임 + 약간의 안전 여유
+        width = item_w + 8 + 2 * popup.frameWidth() + 4
         # 항목이 많아 세로 스크롤바가 생기면 그 폭만큼 추가
         if n > self._search_completer.maxVisibleItems():
             width += popup.verticalScrollBar().sizeHint().width()
-        width += 2 * popup.frameWidth()
         # 화면 밖으로 넘치지 않게 상한
         screen = popup.screen()
         if screen is not None:
