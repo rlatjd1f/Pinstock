@@ -127,3 +127,54 @@ QHeaderView::section:last {{
     border-right: none;
 }}
 """
+
+# ─── 검색 자동완성 드롭다운(QCompleter 팝업) 스타일 ──────────────────────────
+# QCompleter 가 만드는 QListView 팝업은 기본 스타일이라 앱 다크 테마와 겉돈다.
+# 트레이 메뉴(TRAY_MENU_STYLE) 미감에 맞춰 배경·항목·강조·스크롤바를 통일한다.
+SEARCH_POPUP_STYLE = f"""
+QListView {{
+    background: {C['bg']};
+    color: {C['text']};
+    border: 1px solid {C['surface2']};
+    border-radius: 8px;
+    padding: 4px;
+    outline: 0;
+    font-size: 13px;
+}}
+QListView::item {{
+    padding: 7px 10px;
+    border: none;
+    border-radius: 6px;
+    min-height: 20px;
+    color: {C['text']};
+}}
+QListView::item:hover {{
+    background: {C['surface']};
+    color: {C['text']};
+}}
+QListView::item:selected {{
+    background: {C['blue']};
+    color: {C['bg']};
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px;
+}}
+QScrollBar::handle:vertical {{
+    background: {C['surface2']};
+    min-height: 24px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {C['subtext']};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+    background: none;
+    border: none;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+"""

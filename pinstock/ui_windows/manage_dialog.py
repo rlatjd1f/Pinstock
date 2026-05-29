@@ -13,7 +13,7 @@ from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
 from ..core.api import fetch_stock, fetch_us_stock, search_us_stocks, search_korean_stocks
 from ..core.portfolio import is_us_stock, stock_metrics
 from ..core.storage import MARKET_KR, MARKET_US, CURRENCY_KRW, CURRENCY_USD
-from .theme import C, DIALOG_STYLE
+from .theme import C, DIALOG_STYLE, SEARCH_POPUP_STYLE
 from .form_widgets import (
     AutoSelectDoubleSpinBox, SearchLineEdit, QuantitySpinBox, ToggleSwitch,
 )
@@ -164,6 +164,8 @@ class StockDialog(QDialog):
         self._search_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._search_completer.activated[QModelIndex].connect(self._on_search_activated)
         self.code_edit.setCompleter(self._search_completer)
+        # 드롭다운 팝업을 앱 다크 테마와 통일
+        self._search_completer.popup().setStyleSheet(SEARCH_POPUP_STYLE)
         # 디바운스: 타이핑이 0.5초 멈춘 뒤 한 번만 검색
         # (한글 IME 조합 중인 마지막 글자는 SearchLineEdit.composedText()로 포함)
         self._search_timer = QTimer(self)
@@ -292,16 +294,23 @@ class StockDialog(QDialog):
         """입력(확정/조합)이 바뀔 때마다 호출. 디바운스 후 현재 시장에 맞는 API 로 검색."""
         query = self.code_edit.composedText().strip()
         if not query:
-            self._search_timer.stop()
-            self._search_model.clear()
+            self._clear_search()
             return
         # 순수 6자리 숫자(= 한국 종목코드 직접 입력)만 드롭다운을 띄우지 않는다.
         # 글자가 섞이면(예: 6자 종목명 '카카오게임즈') 종목명 검색으로 본다.
         if self.market() == MARKET_KR and len(query) == 6 and query.isdigit():
-            self._search_timer.stop()
-            self._search_model.clear()
+            self._clear_search()
             return
         self._search_timer.start()
+
+    def _clear_search(self):
+        """드롭다운 후보·디바운스·중복검색 캐시를 모두 비운다.
+        _last_search_query 까지 비워야, 검색어를 지웠다가 같은 종목명을 다시
+        입력했을 때 _run_search 의 중복검색 가드(query == _last_search_query)에
+        걸리지 않고 드롭다운이 다시 뜬다."""
+        self._search_timer.stop()
+        self._search_model.clear()
+        self._last_search_query = ""
 
     def _run_search(self):
         query = self.code_edit.composedText().strip()
@@ -327,7 +336,35 @@ class StockDialog(QDialog):
             item.setData(data, Qt.ItemDataRole.UserRole)
             self._search_model.appendRow(item)
         if self._search_model.rowCount() and self.code_edit.hasFocus():
+            self._resize_search_popup()
             self._search_completer.complete()
+
+    def _resize_search_popup(self):
+        """드롭다운 팝업 폭을 가장 긴 후보에 맞춰 넓힌다.
+        기본 QCompleter 팝업은 입력창 너비에 고정돼(showPopup 이 setGeometry 를
+        line edit 폭으로 호출) 긴 종목명이 '...' 로 잘린다. 내용에 맞춘 최소 폭을
+        주면 setGeometry 가 minimumWidth 로 클램프돼 팝업이 넓어진다."""
+        popup = self._search_completer.popup()
+        n = self._search_model.rowCount()
+        if popup is None or n == 0:
+            return
+        # 항목 1개를 잘림 없이 담을 폭. 글꼴 실측(fm, 항목 좌우 padding 10px*2 포함)과
+        # delegate 여백을 반영한 sizeHintForColumn 중 큰 값을 써서 프록시 갱신
+        # 타이밍과 무관하게 안전.
+        fm = popup.fontMetrics()
+        text_w = max(fm.horizontalAdvance(self._search_model.item(r).text())
+                     for r in range(n))
+        item_w = max(text_w + 24, popup.sizeHintForColumn(0))
+        # 뷰 자체 padding(4px*2) + 프레임 + 약간의 안전 여유
+        width = item_w + 8 + 2 * popup.frameWidth() + 4
+        # 항목이 많아 세로 스크롤바가 생기면 그 폭만큼 추가
+        if n > self._search_completer.maxVisibleItems():
+            width += popup.verticalScrollBar().sizeHint().width()
+        # 화면 밖으로 넘치지 않게 상한
+        screen = popup.screen()
+        if screen is not None:
+            width = min(width, screen.availableGeometry().width() - 40)
+        popup.setMinimumWidth(width)
 
     def _on_search_activated(self, index: QModelIndex):
         data = index.data(Qt.ItemDataRole.UserRole)
@@ -347,9 +384,7 @@ class StockDialog(QDialog):
         if not self.is_edit:
             self._set_preview_neutral()
         # 시장이 바뀌면 이전 시장의 후보 목록·캐시된 쿼리를 비운다
-        self._search_timer.stop()
-        self._search_model.clear()
-        self._last_search_query = ""
+        self._clear_search()
         if market == MARKET_US:
             self.code_edit.setPlaceholderText("예: Apple / AAPL")
             self.avg_label.setText("달러 매입단가")
