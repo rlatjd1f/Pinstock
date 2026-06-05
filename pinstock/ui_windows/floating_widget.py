@@ -282,7 +282,7 @@ class StockWidget(QWidget):
     def _extended_session_icon(extended: dict) -> str:
         session = str(extended.get("session") or "").upper()
         if session == "PRE":
-            return "🌅"
+            return "☀️"
         if session == "POST":
             return "🌙"
         return StockWidget._local_session_icon()
