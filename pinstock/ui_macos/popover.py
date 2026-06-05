@@ -20,6 +20,7 @@ from ..core.portfolio import is_us_stock, stock_metrics
 
 # macOS 시스템 한글 폰트 (Malgun Gothic 의 Mac 대체)
 _FONT_FAMILY = "Apple SD Gothic Neo"
+_NUMBER_FONT_FAMILY = "Arial"
 
 
 def format_quantity(value) -> str:
@@ -97,12 +98,12 @@ class StockRow(QWidget):
         price_row.setSpacing(8)
 
         self.price_lbl = QLabel("─")
-        self.price_lbl.setFont(QFont(_FONT_FAMILY, 13, QFont.Weight.Bold))
+        self.price_lbl.setFont(QFont(_NUMBER_FONT_FAMILY, 13, QFont.Weight.Bold))
         self.price_lbl.setStyleSheet(f"color: {C['text']};")
         price_row.addWidget(self.price_lbl)
 
         self.rate_lbl = QLabel("")
-        self.rate_lbl.setFont(QFont(_FONT_FAMILY, 11))
+        self.rate_lbl.setFont(QFont(_NUMBER_FONT_FAMILY, 11))
         self.rate_lbl.setStyleSheet(f"color: {C['subtext']};")
         price_row.addWidget(self.rate_lbl)
         price_row.addStretch()
@@ -184,6 +185,7 @@ class StockRow(QWidget):
         key_lbl.setFixedHeight(16)
 
         val_lbl = QLabel("─")
+        val_lbl.setFont(QFont(_NUMBER_FONT_FAMILY, 11, QFont.Weight.Bold if bold else QFont.Weight.Normal))
         style = f"color: {C['text']}; font-size: 11px;"
         if bold:
             style += " font-weight: bold;"
@@ -486,6 +488,7 @@ class PortfolioSummary(QWidget):
         if bold:
             style += " font-weight: bold;"
         val_lbl = QLabel("─")
+        val_lbl.setFont(QFont(_NUMBER_FONT_FAMILY, 13, QFont.Weight.Bold if bold else QFont.Weight.Normal))
         val_lbl.setStyleSheet(style)
         cell.addWidget(val_lbl)
 
