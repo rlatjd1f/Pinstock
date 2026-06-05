@@ -91,6 +91,7 @@ class WidgetManager:
 
         self.fx_timer = QTimer()
         self.fx_timer.timeout.connect(self._fetch_usd_krw_rate)
+        self._layout_reflow_pending: bool = False
         # 자동 업데이트 체크 상태
         self.update_last_check_at: datetime | None = None
         self._cached_release: updater.ReleaseInfo | None = None
@@ -503,15 +504,70 @@ class WidgetManager:
             base_y = top_y
         # GAP은 reset_positions()의 같은 column 내 세로 간격(4)과 일치해야
         # 필터 변경 후에도 위치 초기화로 맞춘 간격이 유지된다.
-        step_y = StockWidget.COMPACT_H + 4
-        for visible_idx, s in enumerate(visible):
+        gap = 4
+        y = base_y
+        for s in visible:
             w = self.widgets.get(s["code"])
             if not w:
                 continue
             x = base_x
-            y = base_y + visible_idx * step_y
             w.move(x, y)
             s["pos"] = [x, y]
+            y += w.height() + gap
+
+    def _schedule_visible_widgets_reflow(self):
+        """프리/애프터 가격 표시 여부로 위젯 높이가 바뀌면 현재 컬럼을 재정렬한다."""
+        if self._layout_reflow_pending:
+            return
+        self._layout_reflow_pending = True
+        QTimer.singleShot(0, self._reflow_visible_widgets)
+
+    def _reflow_visible_widgets(self):
+        self._layout_reflow_pending = False
+        if self.is_hidden or not self.widgets:
+            return
+
+        GAP = 4
+        COLUMN_TOLERANCE = 12
+
+        groups: dict = {}
+        for s in self.stocks:
+            if not self._is_stock_visible(s):
+                continue
+            w = self.widgets.get(s["code"])
+            if not w or not w.isVisible():
+                continue
+            screen = QApplication.screenAt(w.frameGeometry().center()) or QApplication.primaryScreen()
+            groups.setdefault(screen, []).append((s, w))
+
+        for _screen, items in groups.items():
+            columns: list[list[tuple[dict, StockWidget]]] = []
+            column_xs: list[int] = []
+
+            for s, w in sorted(items, key=lambda item: (item[1].x(), item[1].y())):
+                matched_idx = None
+                for i, x in enumerate(column_xs):
+                    if abs(w.x() - x) <= COLUMN_TOLERANCE:
+                        matched_idx = i
+                        break
+                if matched_idx is None:
+                    column_xs.append(w.x())
+                    columns.append([])
+                    matched_idx = len(columns) - 1
+                columns[matched_idx].append((s, w))
+
+            for column in columns:
+                column.sort(key=lambda item: item[1].y())
+                if not column:
+                    continue
+                x = column[0][1].x()
+                y = min(w.y() for _s, w in column)
+                for s, w in column:
+                    w.move(x, y)
+                    s["pos"] = [x, y]
+                    y += w.height() + GAP
+
+        self._save_config()
 
     def _spawn_widget(self, stock: dict, def_x=60, def_y=60, stagger_idx: int = 0):
         code = stock["code"]
@@ -519,6 +575,7 @@ class WidgetManager:
         w.deleted.connect(self._on_delete)
         w.edited.connect(self._on_edited)
         w.price_updated.connect(lambda _: self._recompute_master())
+        w.layout_changed.connect(lambda _: self._schedule_visible_widgets_reflow())
         w.set_usd_krw_rate(self.usd_krw_rate)
 
         pos = stock.get("pos", [def_x, def_y])

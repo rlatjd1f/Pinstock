@@ -33,6 +33,7 @@ class StockWidget(QWidget):
     deleted        = pyqtSignal(str)   # code 전달
     edited         = pyqtSignal(str)   # 수정 완료 후 저장 요청
     price_updated  = pyqtSignal(str)   # 현재가 갱신 시 (마스터 위젯 재집계용)
+    layout_changed = pyqtSignal(str)   # compact 높이 변경 시 재정렬 요청
 
     MIN_W      = 240    # 기본(최소) 가로폭
     COMPACT_H  = 58     # 축소 높이 (2줄 레이아웃, 압축)
@@ -383,18 +384,21 @@ class StockWidget(QWidget):
         self._set_compact_height(self.EXTENDED_COMPACT_H)
 
     def _set_compact_height(self, height: int):
+        old_height = self._compact_height
+        if old_height == height:
+            return
         self._compact_height = height
         if self.is_expanded:
             self.setFixedHeight(self._expanded_height())
             self.card.setGeometry(0, 0, self.W, self._expanded_height())
             self.compact.setGeometry(0, 0, self.W, height)
             self.expand_panel.setGeometry(0, height, self.W, self.expand_panel.height())
-            return
-        if self.height() == height:
+            self.layout_changed.emit(self.data["code"])
             return
         self.setFixedHeight(height)
         self.card.setGeometry(0, 0, self.W, height)
         self.compact.setGeometry(0, 0, self.W, height)
+        self.layout_changed.emit(self.data["code"])
 
     def _expanded_height(self) -> int:
         return self.EXPAND_H + max(0, self._compact_height - self.COMPACT_H)
